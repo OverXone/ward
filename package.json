@@ -5,7 +5,8 @@
   "description": "Control the League of Legends client from your phone over your local Wi-Fi.",
   "license": "MIT",
   "workspaces": [
-    "connector"
+    "connector",
+    "web"
   ],
   "scripts": {
     "dev": "npm run dev -w connector --",
@@ -13,6 +14,8 @@
     "mock-lcu": "npm run mock-lcu -w connector --",
     "smoke": "npm run smoke -w connector",
     "test": "npm test -w connector",
-    "typecheck": "npm run typecheck -w connector"
+    "typecheck": "npm run typecheck -w connector",
+    "build:web": "npm run build -w web",
+    "watch:web": "npm run watch -w web"
   }
 }
