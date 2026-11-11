@@ -84,16 +84,20 @@ function readJsonBody(req: http.IncomingMessage): Promise<unknown> {
     const type = String(req.headers["content-type"] ?? "");
     const chunks: Buffer[] = [];
     let size = 0;
+    let tooLarge = false;
     req.on("data", (c: Buffer) => {
+      if (tooLarge) return; // drain and discard; the response closes the connection
       size += c.length;
       if (size > MAX_BODY) {
+        tooLarge = true;
+        chunks.length = 0;
         reject(new HttpError(413, "body too large"));
-        req.destroy();
         return;
       }
       chunks.push(c);
     });
     req.on("end", () => {
+      if (tooLarge) return;
       if (size === 0) return resolve(undefined);
       if (!type.toLowerCase().startsWith("application/json")) return reject(new HttpError(415, "expected application/json"));
       try {
@@ -207,7 +211,10 @@ export function createRequestHandler(deps: ServerDeps) {
       });
       res.end(req.method === "HEAD" ? undefined : file.body);
     } catch (e) {
-      if (e instanceof HttpError) return sendError(res, e.status, e.message);
+      if (e instanceof HttpError) {
+        if (e.status === 413) res.setHeader("Connection", "close");
+        return sendError(res, e.status, e.message);
+      }
       log.error(`request failed: ${(e as Error).message}`);
       if (!res.headersSent) sendError(res, 500, "internal error");
     }
