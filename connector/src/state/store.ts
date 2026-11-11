@@ -221,7 +221,8 @@ export class Store extends EventEmitter {
     const r = this.raw ?? emptyRaw();
     const connected = this.lcuStatus === "connected";
     const queueId = r.lobby?.gameConfig?.queueId;
-    const search = r.search && (r.search.isCurrentlyInQueue ?? true) ? r.search : null;
+    // The real client keeps the search object around during champ select, so only report it while queued.
+    const search = r.phase === "Matchmaking" && r.search && (r.search.isCurrentlyInQueue ?? true) ? r.search : null;
     return {
       lcu: this.lcuStatus ?? "searching",
       phase: connected ? r.phase : null,
