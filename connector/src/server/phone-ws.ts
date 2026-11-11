@@ -90,8 +90,9 @@ export function attachPhoneSocket(server: http.Server, deps: PhoneSocketDeps): {
     pending = state;
     if (!first) return;
     setTimeout(() => {
-      const msg = JSON.stringify({ type: "state", state: pending } satisfies ServerMessage);
+      const latest = pending ?? deps.store.state;
       pending = null;
+      const msg = JSON.stringify({ type: "state", state: latest } satisfies ServerMessage);
       for (const ws of clients) if (ws.readyState === WebSocket.OPEN) ws.send(msg);
     }, 30);
   };
