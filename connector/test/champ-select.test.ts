@@ -47,6 +47,18 @@ describe("findHoverTarget", () => {
     expect(findMyActiveAction(s)).toBeNull();
   });
 
+  it("real client: bans flagged isInProgress during PLANNING are not my turn yet", () => {
+    // Shape recorded from a live Draft Pick lobby: all 10 bans isInProgress while timer.phase = PLANNING.
+    const s = draftSession({ phase: "PLANNING" });
+    for (const a of s.actions[0]!) a.isInProgress = true;
+    expect(findMyActiveAction(s)).toBeNull();
+    expect(findHoverTarget(s)).toMatchObject({ type: "pick", actorCellId: 2 });
+    const v = deriveChampSelect(s, [], []);
+    expect(v.myTurn).toBeNull();
+    expect(v.canHoverIntent).toBe(true);
+    expect(v.myTeam.every((p) => p.activeAction === null)).toBe(true);
+  });
+
   it("targets my active ban rather than my future pick", () => {
     expect(findHoverTarget(advanceTo(draftSession(), 0))?.type).toBe("ban");
   });

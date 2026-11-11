@@ -57,8 +57,13 @@ export function currentTurn(session: LcuSession): LcuAction[] | null {
   return (session.actions ?? []).find((turn) => turn.some((a) => !a.completed)) ?? null;
 }
 
-/** Actions currently in progress (anyone's). */
+/**
+ * Actions currently in progress (anyone's). Only during BAN_PICK: the real client
+ * already flags the ban actions isInProgress during PLANNING (verified 2026-11-12),
+ * but they can't be acted on until BAN_PICK starts.
+ */
 export function inProgressActions(session: LcuSession): LcuAction[] {
+  if (session.timer?.phase !== "BAN_PICK") return [];
   if (hasInProgressFlag(session)) {
     return flatActions(session).filter((a) => a.isInProgress === true && !a.completed);
   }
