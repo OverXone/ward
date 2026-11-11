@@ -138,7 +138,11 @@ How the connector validates a request:
 - **Traffic is plain HTTP on the LAN.** On home Wi-Fi (WPA2/3) that's fine. On shared or public Wi-Fi, anyone on that network could sniff the token and tap Accept or Decline for you. HTTPS would need a self-signed certificate installed on each phone, which goes against "easy to install".
 - **"Installable PWA" is limited over plain HTTP.** Browsers only allow service workers and true PWA install on HTTPS. On iPhone, *Add to Home Screen* still gives a full-screen app. On Android it's likely only a home-screen shortcut that opens in Chrome. **You need to check this on your phone.** Vibration only works on Android; iOS has no Vibration API, so iPhone gets the sound alert instead.
 
-## 7. Open question: a new token on every launch vs. the iPhone home-screen app
+## 7. Decided: one-time pairing code (option A)
+
+The connector prints a QR code and an 8-character pairing code (`XXXX-XXXX`, Crockford base32). The code is valid for 5 minutes, allows 5 attempts in total, and works once. The phone sends `POST /api/pair {code}` and receives `{token}`. Pressing Enter in the connector window prints a new code. The session token still changes on every launch.
+
+### Original options considered: a new token on every launch vs. the iPhone home-screen app
 
 On iOS, a home-screen web app has **separate storage from Safari**. Scanning a new QR code each launch opens Safari, so the home-screen app keeps the old token. (Android usually opens the link in the right place.) Options:
 
