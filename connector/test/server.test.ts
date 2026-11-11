@@ -28,23 +28,14 @@ describe.skipIf(!lanIp)("LAN server", () => {
   let code = "";
 
   beforeAll(async () => {
-    server = createHttpServer({
-      host: lanIp!,
-      port: 0, // replaced below once bound
-      token,
-      pairing,
-      limiter: new FailureLimiter(10, 60_000),
-      champions: new Champions(),
-      store,
-      getLcu: () => null,
-      staticFiles: new Map([["/index.html", { contentType: "text/html", body: Buffer.from("<h1>ui</h1>"), immutable: false }]]),
-    });
-    await new Promise<void>((r) => server.listen(0, lanIp, () => r()));
-    port = (server.address() as AddressInfo).port;
+    // The Host check needs the port up front, so grab a free one first.
+    const probe = http.createServer();
+    await new Promise<void>((r) => probe.listen(0, lanIp, () => r()));
+    port = (probe.address() as AddressInfo).port;
+    await new Promise((r) => probe.close(r));
     host = expectedHost({ host: lanIp!, port });
-    // Rebuild handler deps with the real port (the Host check needs it).
-    server.removeAllListeners("request");
-    const real = createHttpServer({
+
+    server = createHttpServer({
       host: lanIp!,
       port,
       token,
@@ -55,7 +46,7 @@ describe.skipIf(!lanIp)("LAN server", () => {
       getLcu: () => null,
       staticFiles: new Map([["/index.html", { contentType: "text/html", body: Buffer.from("<h1>ui</h1>"), immutable: false }]]),
     });
-    for (const l of real.listeners("request")) server.on("request", l as never);
+    await new Promise<void>((r) => server.listen(port, lanIp, () => r()));
     socket = attachPhoneSocket(server, { host, token, limiter: new FailureLimiter(), store });
     code = pairing.issue();
   });
