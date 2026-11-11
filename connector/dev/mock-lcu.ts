@@ -420,35 +420,37 @@ async function handle(req: any, res: any): Promise<void> {
 
 // ---------- boot ----------
 
-const pems = await selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { days: 1, keySize: 2048 });
-const server = https.createServer({ key: pems.private, cert: pems.cert }, (req, res) => void handle(req, res));
-const wss = new WebSocketServer({ noServer: true });
-server.on("upgrade", (req, socket, head) => {
-  if (req.headers.authorization !== expectedAuth) {
-    socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
-    return socket.destroy();
-  }
-  wss.handleUpgrade(req, socket, head, (ws) => {
-    ws.on("message", (raw) => {
-      const msg = JSON.parse(raw.toString());
-      if (msg[0] === 5) {
-        sockets.add(ws);
-        say(`websocket subscribed to ${msg[1]}`);
-      }
-    });
-    ws.on("close", () => sockets.delete(ws));
-  });
-});
-
 const dir = path.join(os.tmpdir(), "ward-mock");
-server.listen(0, "127.0.0.1", () => {
-  const port = (server.address() as { port: number }).port;
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, "lockfile"), `LeagueClient:${process.pid}:${port}:${password}:https`);
-  toLobby();
-  console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
-  console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
-  console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit\n");
+
+void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { days: 1, keySize: 2048 }).then((pems) => {
+  const server = https.createServer({ key: pems.private, cert: pems.cert }, (req, res) => void handle(req, res));
+  const wss = new WebSocketServer({ noServer: true });
+  server.on("upgrade", (req, socket, head) => {
+    if (req.headers.authorization !== expectedAuth) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      return socket.destroy();
+    }
+    wss.handleUpgrade(req, socket, head, (ws) => {
+      ws.on("message", (raw) => {
+        const msg = JSON.parse(raw.toString());
+        if (msg[0] === 5) {
+          sockets.add(ws);
+          say(`websocket subscribed to ${msg[1]}`);
+        }
+      });
+      ws.on("close", () => sockets.delete(ws));
+    });
+  });
+
+  server.listen(0, "127.0.0.1", () => {
+    const port = (server.address() as { port: number }).port;
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(path.join(dir, "lockfile"), `LeagueClient:${process.pid}:${port}:${password}:https`);
+    toLobby();
+    console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
+    console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
+    console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit\n");
+  });
 });
 
 const cleanup = () => {
