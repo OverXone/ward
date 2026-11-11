@@ -422,7 +422,7 @@ async function handle(req: any, res: any): Promise<void> {
 
 const dir = path.join(os.tmpdir(), "ward-mock");
 
-void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { days: 1, keySize: 2048 }).then((pems) => {
+void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType: "ec", notAfterDate: new Date(Date.now() + 86_400_000) }).then((pems) => {
   const server = https.createServer({ key: pems.private, cert: pems.cert }, (req, res) => void handle(req, res));
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
