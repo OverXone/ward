@@ -1,0 +1,27 @@
+{
+  "name": "@ward/connector",
+  "private": true,
+  "version": "0.1.0",
+  "license": "MIT",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "events": "tsx src/main.ts --events",
+    "mock-lcu": "tsx dev/mock-lcu.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "ws": "^8.22.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "@types/qrcode": "^1.5.6",
+    "@types/ws": "^8.18.2",
+    "esbuild": "^0.28.2",
+    "selfsigned": "^5.5.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.0"
+  }
+}

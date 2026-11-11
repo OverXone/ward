@@ -1,0 +1,17 @@
+{
+  "name": "ward",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Control the League of Legends client from your phone over your local Wi-Fi.",
+  "license": "MIT",
+  "workspaces": [
+    "connector"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w connector --",
+    "events": "npm run events -w connector --",
+    "mock-lcu": "npm run mock-lcu -w connector --",
+    "test": "npm test -w connector",
+    "typecheck": "npm run typecheck -w connector"
+  }
+}
