@@ -38,20 +38,23 @@ Usage: ward [options]
   -h, --help          Show this help
 `;
 
-function waitForEnterThenExit(code: number): never {
+class FatalError extends Error {}
+
+/** Throw from synchronous startup code; caught in main(). */
+function fatal(message: string): never {
+  throw new FatalError(message);
+}
+
+/** Logs the error and exits. When run by double-click, keeps the window open until Enter. */
+function exitWithError(message: string): void {
+  log.error(message);
   if (process.stdin.isTTY) {
     console.log("\nPress Enter to close.");
     process.stdin.resume();
-    process.stdin.once("data", () => process.exit(code));
-    // keep the window open
-    return undefined as never;
+    process.stdin.once("data", () => process.exit(1));
+  } else {
+    process.exit(1);
   }
-  process.exit(code);
-}
-
-function fatal(message: string): never {
-  log.error(message);
-  return waitForEnterThenExit(1);
 }
 
 async function printBanner(host: string, port: number, token: string, code: string, others: string[]): Promise<void> {
@@ -122,9 +125,10 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
   const phoneSocket = attachPhoneSocket(server, { host: expectedHost({ host: lanHost, port: opts.port }), token, limiter, store });
 
   server.on("error", (e: NodeJS.ErrnoException) => {
-    if (e.code === "EADDRINUSE") fatal(`Port ${opts.port} is already in use. Is Ward already running? (or use --port)`);
-    if (e.code === "EADDRNOTAVAIL") fatal(`Can't listen on ${lanHost}. Did the network change? Try again or use --host.`);
-    fatal(`Server error: ${e.message}`);
+    manager.stop();
+    if (e.code === "EADDRINUSE") exitWithError(`Port ${opts.port} is already in use. Is Ward already running? (or use --port)`);
+    else if (e.code === "EADDRNOTAVAIL") exitWithError(`Can't listen on ${lanHost}. Did the network change? Try again or use --host.`);
+    else exitWithError(`Server error: ${e.message}`);
   });
 
   server.listen(opts.port, lanHost, () => {
@@ -170,6 +174,7 @@ function main(): void {
     return fatal((e as Error).message);
   }
 
+
   if (values.help) {
     console.log(HELP);
     return;
@@ -188,5 +193,9 @@ function main(): void {
   runServer({ host: typeof values.host === "string" ? values.host : undefined, port, leagueDir });
 }
 
-process.on("uncaughtException", (e) => fatal(`Unexpected error: ${e.message}`));
-main();
+process.on("uncaughtException", (e) => exitWithError(`Unexpected error: ${e.message}`));
+try {
+  main();
+} catch (e) {
+  exitWithError(e instanceof FatalError ? e.message : `Unexpected error: ${(e as Error).message}`);
+}
