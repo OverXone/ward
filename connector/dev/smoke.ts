@@ -56,7 +56,8 @@ function check(cond: unknown, msg: string): void {
 async function main() {
   // --- mock LCU ---
   let mockLines: string[] = [];
-  let mock = start("dev/mock-lcu.ts", [], (l) => mockLines.push(l));
+  const mockArgs = process.argv.slice(2); // e.g. --no-complete
+  let mock = start("dev/mock-lcu.ts", mockArgs, (l) => mockLines.push(l));
   const dir = await waitFor("mock lockfile dir", () => /--league-dir "([^"]+)"/.exec(mockLines.join("\n"))?.[1]);
   const lcuPassword = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
 
@@ -144,7 +145,7 @@ async function main() {
   await waitFor("disconnect noticed", () => state?.lcu === "searching", 15_000);
   check(state!.phase === null && state!.champSelect === null, "state cleared when client closes");
   mockLines = [];
-  mock = start("dev/mock-lcu.ts", [], (l) => mockLines.push(l));
+  mock = start("dev/mock-lcu.ts", mockArgs, (l) => mockLines.push(l));
   await waitFor("reconnected", () => state?.lcu === "connected" && state.phase === "Lobby", 20_000);
   check(true, "reconnected after client restart");
   const lcuPassword2 = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
