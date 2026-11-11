@@ -7,6 +7,7 @@
     "dev": "tsx src/main.ts",
     "events": "tsx src/main.ts --events",
     "mock-lcu": "tsx dev/mock-lcu.ts",
+    "smoke": "tsx dev/smoke.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
