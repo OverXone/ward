@@ -16,7 +16,7 @@ import { runEventsMode } from "./cli/events";
 import { LcuManager } from "./lcu/manager";
 import { addSecret, log } from "./log";
 import { WATCHED_URIS, Store } from "./state/store";
-import { loadStaticFiles } from "./server/assets";
+import { staticFiles } from "./server/assets";
 import { FailureLimiter, formatCode, generateToken, Pairing } from "./server/auth";
 import { createHttpServer, expectedHost } from "./server/http";
 import { isPrivateIPv4, lanCandidates } from "./server/net";
@@ -120,7 +120,7 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     champions,
     store,
     getLcu: () => manager.http,
-    staticFiles: loadStaticFiles(),
+    staticFiles: staticFiles(),
   });
   const phoneSocket = attachPhoneSocket(server, { host: expectedHost({ host: lanHost, port: opts.port }), token, limiter, store });
 

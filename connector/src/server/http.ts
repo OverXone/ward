@@ -9,7 +9,7 @@ import type { Champions } from "../champions";
 import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { Store } from "../state/store";
-import type { StaticFile } from "./assets";
+import type { StaticFiles } from "./assets";
 import { bearerToken, safeEqual, type FailureLimiter, type Pairing } from "./auth";
 import { isPrivateIPv4, normalizeRemote } from "./net";
 
@@ -22,7 +22,7 @@ export interface ServerDeps {
   champions: Champions;
   store: Store;
   getLcu: () => LcuHttp | null;
-  staticFiles: Map<string, StaticFile>;
+  staticFiles: StaticFiles;
 }
 
 const MAX_BODY = 1024;

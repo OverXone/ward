@@ -46,6 +46,25 @@ function walk(dir: string, base = dir, out: string[] = []): string[] {
   return out;
 }
 
+export interface StaticFiles {
+  get(urlPath: string): StaticFile | undefined;
+}
+
+/**
+ * In the exe the files never change. In development, index.html requests re-read
+ * web/dist so `npm run watch:web` rebuilds show up on a phone reload.
+ */
+export function staticFiles(): StaticFiles {
+  let files = loadStaticFiles();
+  if (sea.isSea()) return files;
+  return {
+    get(urlPath) {
+      if (urlPath === "/index.html") files = loadStaticFiles();
+      return files.get(urlPath);
+    },
+  };
+}
+
 export function loadStaticFiles(devDir = path.resolve(__dirname, "../../../web/dist")): Map<string, StaticFile> {
   const files = new Map<string, StaticFile>();
   const add = (rel: string, body: Buffer) =>
