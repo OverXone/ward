@@ -96,6 +96,8 @@ interface Action {
 const LOCAL_CELL = 2;
 const state: Record<string, unknown> = {};
 let session: any = null;
+/** When the current champ-select phase/turn ends (like the real client, timeLeft counts down within a turn). */
+let phaseEndsAt = 0;
 let timers: NodeJS.Timeout[] = [];
 const sockets = new Set<WebSocket>();
 
@@ -234,6 +236,7 @@ function toChampSelect(): void {
     hasSimultaneousBans: true,
     hasSimultaneousPicks: false,
   };
+  phaseEndsAt = Date.now() + 10000;
   set(URIS.phase, "ChampSelect");
   publishSession();
   say(`phase ChampSelect (you are cell ${LOCAL_CELL}); planning 10 s`);
@@ -261,6 +264,7 @@ function publishSession(): void {
   set(URIS.pickable, ALL_IDS.filter((x) => !taken.has(x)));
   set(URIS.bannable, ALL_IDS.filter((x) => !banned.has(x)));
   session.timer.internalNowInEpochMs = Date.now();
+  session.timer.adjustedTimeLeftInPhase = Math.max(0, phaseEndsAt - Date.now());
   set(URIS.session, structuredClone(session));
 }
 
@@ -275,6 +279,7 @@ function startNextTurn(): void {
   const group = currentGroup();
   if (!group) {
     session.timer = { ...session.timer, phase: "FINALIZATION", adjustedTimeLeftInPhase: 10000, totalTimeInPhase: 10000 };
+    phaseEndsAt = Date.now() + 10000;
     publishSession();
     say("FINALIZATION (game starts in 10 s)");
     later(10000, toGame);
@@ -282,6 +287,7 @@ function startNextTurn(): void {
   }
   group.forEach((a) => (a.isInProgress = true));
   session.timer = { ...session.timer, phase: "BAN_PICK", adjustedTimeLeftInPhase: 30000, totalTimeInPhase: 30000 };
+  phaseEndsAt = Date.now() + 30000;
   publishSession();
 
   if (group[0]?.type === "ten_bans_reveal") {
