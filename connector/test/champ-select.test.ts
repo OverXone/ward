@@ -95,6 +95,13 @@ describe("deriveChampSelect", () => {
     expect(json).not.toMatch(/puuid|summonerId|chat-secret|900002/);
   });
 
+  it("computes time left relative to the client's timestamp", () => {
+    const s = draftSession();
+    s.timer = { phase: "BAN_PICK", adjustedTimeLeftInPhase: 25000, internalNowInEpochMs: 1_000_000 };
+    expect(deriveChampSelect(s, [], [], 1_004_000).timeLeftMs).toBe(21000);
+    expect(deriveChampSelect(s, [], [], 1_030_000).timeLeftMs).toBe(0);
+  });
+
   it("filters junk out of champion id lists", () => {
     const v = deriveChampSelect(draftSession(), [1, -1, 2.5, 0, 7], null);
     expect(v.pickableChampionIds).toEqual([1, 7]);

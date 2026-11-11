@@ -37,7 +37,7 @@ export interface LcuSession {
   myTeam: LcuMember[];
   theirTeam: LcuMember[];
   bans?: { myTeamBans?: number[]; theirTeamBans?: number[] };
-  timer?: { phase?: string; adjustedTimeLeftInPhase?: number; isInfinite?: boolean };
+  timer?: { phase?: string; adjustedTimeLeftInPhase?: number; internalNowInEpochMs?: number; isInfinite?: boolean };
   isSpectating?: boolean;
 }
 
@@ -147,17 +147,31 @@ function toPlayer(m: LcuMember, index: number, friendly: boolean, session: LcuSe
   };
 }
 
+/**
+ * Time left right now. The LCU reports `adjustedTimeLeftInPhase` as of
+ * `internalNowInEpochMs` (the PC's clock, same as ours), and often sends the
+ * same value (e.g. 25000) at the start of several turns, so we convert it to
+ * "ms left at this moment" and the phone restarts its countdown on every push.
+ */
+export function timeLeftMs(timer: LcuSession["timer"], now = Date.now()): number {
+  const left = timer?.adjustedTimeLeftInPhase ?? 0;
+  const at = timer?.internalNowInEpochMs;
+  const ms = typeof at === "number" && at > 0 ? at + left - now : left;
+  return Math.max(0, Math.round(ms));
+}
+
 export function deriveChampSelect(
   session: LcuSession,
   pickable: number[] | null,
   bannable: number[] | null,
+  now = Date.now(),
 ): ChampSelectView {
   const active = inProgressActions(session);
   const my = findMyActiveAction(session);
   const hoverTarget = findHoverTarget(session);
   return {
     phase: session.timer?.phase ?? "UNKNOWN",
-    timeLeftMs: Math.max(0, Math.round(session.timer?.adjustedTimeLeftInPhase ?? 0)),
+    timeLeftMs: timeLeftMs(session.timer, now),
     isInfinite: !!session.timer?.isInfinite,
     myTeam: (session.myTeam ?? []).map((m, i) => toPlayer(m, i, true, session, active)),
     theirTeam: (session.theirTeam ?? []).map((m, i) => toPlayer(m, i, false, session, active)),
