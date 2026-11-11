@@ -40,6 +40,18 @@ const CHAMPIONS: { id: number; name: string; alias: string; color: [number, numb
   { id: 412, name: "Thresh", alias: "Thresh", color: [50, 170, 110] },
   { id: 875, name: "Sett", alias: "Sett", color: [180, 100, 60] },
   { id: 147, name: "Seraphine", alias: "Seraphine", color: [240, 150, 200] },
+  // More names so a full draft (10 bans + 10 picks) still leaves a grid to choose from.
+  ...[
+    [2, "Olaf"], [3, "Galio"], [4, "Twisted Fate"], [5, "Xin Zhao"], [6, "Urgot"], [7, "LeBlanc"], [8, "Vladimir"],
+    [10, "Kayle"], [11, "Master Yi"], [12, "Alistar"], [13, "Ryze"], [14, "Sion"], [15, "Sivir"], [16, "Soraka"],
+    [17, "Teemo"], [18, "Tristana"], [19, "Warwick"], [20, "Nunu & Willump"], [21, "Miss Fortune"], [23, "Tryndamere"],
+    [24, "Jax"], [25, "Morgana"], [26, "Zilean"], [27, "Singed"], [28, "Evelynn"], [29, "Twitch"], [30, "Karthus"],
+  ].map(([id, name], i) => ({
+    id: id as number,
+    name: name as string,
+    alias: (name as string).replace(/[^A-Za-z]/g, ""),
+    color: [60 + ((i * 47) % 180), 60 + ((i * 89) % 180), 60 + ((i * 131) % 180)] as [number, number, number],
+  })),
 ];
 const ALL_IDS = CHAMPIONS.map((c) => c.id);
 
