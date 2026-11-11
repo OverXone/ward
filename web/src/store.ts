@@ -37,8 +37,9 @@ async function loadChampions(): Promise<void> {
 
 function onState(state: PhoneState): void {
   const now = performance.now();
+  // Every push carries the time left *as of sending*, so restart the local countdown each time.
   const cs = state.champSelect;
-  if (cs && cs.timeLeftMs !== app.csTimerBase.value) app.csTimerBase = { value: cs.timeLeftMs, at: now };
+  if (cs) app.csTimerBase = { value: cs.timeLeftMs, at: now };
   const q = state.queue;
   if (q && q.timeInQueue !== app.queueTimerBase.value) app.queueTimerBase = { value: q.timeInQueue, at: now };
 
