@@ -30,6 +30,8 @@ type Input = Record<string, unknown>;
 interface ActionDef {
   /** Allowed body keys; anything else is rejected. */
   keys: readonly string[];
+  /** Pure input checks, run before we even look at the client. */
+  validate?(input: Input): void;
   run(input: Input, http: LcuHttp): Promise<void>;
 }
 
@@ -125,6 +127,7 @@ const ACTIONS = {
   },
   "champ-select/hover": {
     keys: ["championId"],
+    validate: (input) => void championIdFrom(input),
     async run(input, http) {
       const championId = championIdFrom(input);
       const session = await getSession(http);
@@ -164,6 +167,7 @@ export function isActionName(name: string): name is ActionName {
 export async function runAction(name: ActionName, body: unknown, ctx: ActionContext): Promise<void> {
   const def: ActionDef = ACTIONS[name];
   const input = parseInput(body, def.keys);
+  def.validate?.(input);
   if (!ctx.http) throw new ActionError(503, "League client not connected");
   try {
     await def.run(input, ctx.http);
