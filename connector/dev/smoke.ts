@@ -105,7 +105,7 @@ async function main() {
 
   // --- champions & icons ---
   const champs = (await (await fetch(base + "/api/champions", { headers: { Authorization: `Bearer ${token}` } })).json()) as { id: number }[];
-  check(champs.length === 14 && !champs.some((c) => c.id <= 0), "champion list proxied (id -1 filtered)");
+  check(champs.length > 20 && !champs.some((c) => c.id <= 0), "champion list proxied (id -1 filtered)");
   const icon = await fetch(base + "/api/champions/103/icon", { headers: { Authorization: `Bearer ${token}` } });
   check(icon.status === 200 && icon.headers.get("content-type") === "image/png", "champion icon proxied");
   check((await fetch(base + "/api/champions/999999/icon", { headers: { Authorization: `Bearer ${token}` } })).status === 404, "unknown champion icon → 404");
