@@ -112,6 +112,7 @@ const seconds = computed(() => champSelectSecondsLeft());
 
     <ChampGrid
       v-if="canChoose"
+      :key="cs.myTurn?.type ?? 'intent'"
       :champions="champions"
       :enabled="enabled"
       :selected="selected"
