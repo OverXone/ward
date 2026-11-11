@@ -7,8 +7,8 @@ Control your League of Legends client from your phone over your home Wi-Fi. From
 
 There's no cloud and no accounts. Everything stays on your local network.
 
-> **Status:** the connector (step 2) is done. The phone UI (step 3) and the single `.exe` (step 4) are next.
-> Until then, the phone page at `http://<pc-ip>:47800` is only a placeholder.
+> **Status:** the connector and the phone UI are done. Packaging as a single `.exe` is next.
+> For now, run it from source (below).
 
 ## Developer quick start
 
@@ -33,8 +33,11 @@ npm run events -- --all      # also lists every other LCU event URI
 ### Run the phone server
 
 ```bash
+npm run build:web      # build the phone UI once (or: npm run watch:web while editing)
 npm run dev
 ```
+
+While `watch:web` is running, reloading the page on the phone picks up a fresh build. You don't need to restart the connector.
 
 The connector prints a QR code and a pairing code. Your phone must be on the same Wi-Fi.
 - **Scan the QR code** with your phone camera, or
