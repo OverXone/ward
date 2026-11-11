@@ -56,7 +56,7 @@ const filtered = computed(() => {
       </button>
     </div>
     <p v-if="!filtered.available.length && !filtered.unavailable.length" class="none">
-      {{ champions.length ? "No champion matches." : "Loading champions…" }}
+      {{ !champions.length ? "Loading champions…" : search ? "No champion matches." : "No champions available." }}
     </p>
   </section>
 </template>
