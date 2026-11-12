@@ -62,7 +62,7 @@ const headline = computed(() => {
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Your turn to ban" : "Your turn to pick";
   switch (cs.phase) {
     case "PLANNING":
-      return "Declare your champion";
+      return "Planning: pick what you'll play";
     case "FINALIZATION":
       return "Finalizing";
     case "GAME_STARTING":
@@ -82,6 +82,7 @@ const headline = computed(() => {
 const subline = computed(() => {
   const cs = props.cs;
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Tap a champion, then confirm the ban." : "Tap a champion, then lock in.";
+  if (cs.canHoverIntent && cs.phase === "PLANNING") return "Bans start when the timer ends. This only shows your team your plan.";
   if (cs.canHoverIntent) return "Tap to show your team what you'll play.";
   if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Pick runes, spells and skin on your PC." : "";
   if (cs.hasLockedPick) return "You're locked in.";
