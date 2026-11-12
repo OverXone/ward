@@ -152,40 +152,24 @@ describe("champ select", () => {
     return { lcu: csLcu(s, routes(mine)), path };
   }
 
-  it("re-hovers, completes, and verifies the lock", async () => {
+  it("locks with PATCH {completed:true} and verifies it", async () => {
     const { lcu, path } = lockSetup(103, (mine) => ({
-      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(),
-      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: () => ((mine.completed = true), { status: 204 }),
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
+        if ((body as { completed?: boolean }).completed) mine.completed = true;
+        return { status: 204 };
+      },
     }));
     await run("champ-select/lock", {}, lcu.http);
-    expect(lcu.writes()).toEqual([
-      { method: "PATCH", path, body: { championId: 103 } },
-      { method: "POST", path: `${path}/complete`, body: undefined },
-    ]);
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path, body: { championId: 103, completed: true } }]);
   });
 
-  it("falls back to PATCH {completed:true} when /complete says OK but doesn't lock (seen on a live client)", async () => {
+  it("falls back to POST /complete when the PATCH doesn't lock", async () => {
     const { lcu, path } = lockSetup(222, (mine) => ({
-      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
-        if ((body as { completed?: boolean }).completed) mine.completed = true;
-        return { status: 204 };
-      },
-      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok(), // 204, no effect
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(), // 204, no effect
+      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: () => ((mine.completed = true), { status: 204 }),
     }));
     await run("champ-select/lock", undefined, lcu.http);
-    expect(lcu.writes().map((w) => `${w.method} ${w.path}`)).toEqual([`PATCH ${path}`, `POST ${path}/complete`, `PATCH ${path}`]);
-    expect(lcu.writes()[2]?.body).toEqual({ championId: 222, completed: true });
-  });
-
-  it("falls back when /complete is 404 (older clients)", async () => {
-    const { lcu } = lockSetup(222, (mine) => ({
-      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
-        if ((body as { completed?: boolean }).completed) mine.completed = true;
-        return { status: 204 };
-      },
-    }));
-    await run("champ-select/lock", undefined, lcu.http);
-    expect(lcu.writes()).toHaveLength(3);
+    expect(lcu.writes().map((w) => `${w.method} ${w.path}`)).toEqual([`PATCH ${path}`, `POST ${path}/complete`]);
   });
 
   it("reports an error instead of pretending, when nothing locks", async () => {
@@ -194,6 +178,19 @@ describe("champ select", () => {
       [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok(),
     }));
     await expectError(run("champ-select/lock", undefined, lcu.http), 502, /didn't accept/);
+  });
+
+  it("bans using the list League pushed when GET /bannable-champion-ids is empty (seen on a live client)", async () => {
+    const s = advanceTo(draftSession(), 0);
+    const myBan = s.actions[0]!.find((a) => a.actorCellId === 2)!.id;
+    const lcu = csLcu(s, {
+      "GET /lol-champ-select/v1/bannable-champion-ids": ok([]),
+      [`PATCH /lol-champ-select/v1/session/actions/${myBan}`]: ok(),
+    });
+    const lists = () => ({ pickable: [103], bannable: [51, 157] });
+    await runAction("champ-select/hover", { championId: 51 }, { http: lcu.http, lists });
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${myBan}`, body: { championId: 51 } }]);
+    await expectError(runAction("champ-select/hover", { championId: 222 }, { http: lcu.http, lists }), 400, /banned/);
   });
 
   it("re-validates the hovered champion before locking", async () => {
