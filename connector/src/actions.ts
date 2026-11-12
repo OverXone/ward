@@ -10,6 +10,7 @@
 
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import { findHoverTarget, findMyActiveAction, type LcuAction, type LcuSession } from "./state/champ-select";
+import { log } from "./log";
 import { URI } from "./state/store";
 
 export class ActionError extends Error {
@@ -85,6 +86,17 @@ async function assertAllowed(http: LcuHttp, action: LcuAction, championId: numbe
   }
 }
 
+/** Polls the session briefly until the action is completed (or gone, e.g. phase moved on). */
+export async function waitCompleted(http: LcuHttp, actionId: number, tries = 5, delayMs = 200): Promise<boolean> {
+  for (let i = 0; i < tries; i++) {
+    const s = await http.getOrNull<LcuSession>(URI.session);
+    const a = s?.actions?.flat().find((x) => x.id === actionId);
+    if (!s || !a || a.completed) return true;
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  return false;
+}
+
 const actionPath = (id: number) => {
   if (!Number.isInteger(id) || id < 0) throw new ActionError(500, "invalid action id from client");
   return `/lol-champ-select/v1/session/actions/${id}`;
@@ -145,14 +157,23 @@ const ACTIONS = {
       const action = findMyActiveAction(session);
       if (!action) throw new ActionError(409, "It's not your turn");
       if (!(action.championId > 0)) throw new ActionError(409, "Select a champion first");
-      await assertAllowed(http, action, action.championId);
+      const championId = action.championId;
+      await assertAllowed(http, action, championId);
       const path = actionPath(action.id);
-      // Current clients: POST .../complete. Older clients (and Mimic): PATCH { completed: true }.
+
+      // Verified on a live client (2026-11-12): POST .../complete can answer 2xx without
+      // locking, e.g. when the champion was only declared as intent during planning.
+      // So: re-hover on the active action, complete, then check the session really changed.
+      await call(http, "PATCH", path, { championId });
       const status = await call(http, "POST", `${path}/complete`);
-      if (status === 404) {
-        const fallback = await call(http, "PATCH", path, { championId: action.championId, completed: true });
-        if (fallback === 404) throw new ActionError(409, "That action no longer exists");
-      }
+      if (status !== 404 && (await waitCompleted(http, action.id))) return;
+      log.warn(`Lock-in: POST /complete answered ${status} but the action is still open; trying PATCH {completed:true}`);
+
+      // Older clients (and Mimic): PATCH { championId, completed: true }.
+      const fallback = await call(http, "PATCH", path, { championId, completed: true });
+      if (fallback === 404) throw new ActionError(409, "That action no longer exists");
+      if (await waitCompleted(http, action.id)) return;
+      throw new ActionError(502, "League didn't accept the lock-in. Lock in on your PC.");
     },
   },
 } satisfies Record<string, ActionDef>;
