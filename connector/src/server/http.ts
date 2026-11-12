@@ -174,16 +174,35 @@ export function createRequestHandler(deps: ServerDeps) {
     return sendError(res, 405, "method not allowed");
   }
 
+  // Rejections are logged (once a minute per reason+source) so connection problems can be diagnosed.
+  const lastRejectLog = new Map<string, number>();
+  const logReject = (key: string, message: string) => {
+    const now = Date.now();
+    if ((lastRejectLog.get(key) ?? 0) > now - 60_000) return;
+    if (lastRejectLog.size > 200) lastRejectLog.clear();
+    lastRejectLog.set(key, now);
+    log.warn(message);
+  };
+  const seenIps = new Set<string>();
+
   return async function handle(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     const ip = normalizeRemote(req.socket.remoteAddress);
     if (!isPrivateIPv4(ip)) {
+      logReject(`ip:${ip}`, `Refused request from ${ip || "unknown"}: not a private LAN address`);
       res.writeHead(403).end();
       return;
     }
     // DNS-rebinding guard: only answer requests addressed to our exact LAN ip:port.
+    // 403, not 421: browsers automatically retry 421 and end in ERR_TOO_MANY_RETRIES.
     if (req.headers.host !== host) {
-      res.writeHead(421, { "Content-Type": "text/plain" }).end("Misdirected request");
+      const shown = String(req.headers.host ?? "(none)").slice(0, 80).replace(/[^\x20-\x7e]/g, "?");
+      logReject(`host:${ip}:${shown}`, `Refused request from ${ip}: it was addressed to "${shown}", expected "${host}"`);
+      res.writeHead(403, { "Content-Type": "text/plain" }).end(`Open http://${host}/ instead.`);
       return;
+    }
+    if (!seenIps.has(ip) && seenIps.size < 100) {
+      seenIps.add(ip);
+      log.info(`Phone/browser connected from ${ip}`);
     }
     securityHeaders(res, host);
 

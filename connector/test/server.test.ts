@@ -84,7 +84,7 @@ describe.skipIf(!lanIp)("LAN server", () => {
   });
 
   it("rejects a foreign Host header (DNS rebinding)", async () => {
-    expect((await req("/api/state", { host: "evil.example:1234", headers: auth() })).status).toBe(421);
+    expect((await req("/api/state", { host: "evil.example:1234", headers: auth() })).status).toBe(403);
   });
 
   it("requires the token on API routes", async () => {
