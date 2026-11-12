@@ -10,6 +10,7 @@ export const app = reactive({
   /** Local clock (performance.now) when the current champ-select timer value arrived. */
   csTimerBase: { value: -1, at: 0 },
   queueTimerBase: { value: -1, at: 0 },
+  readyTimerBase: { value: -1, at: 0 },
   toast: null as { text: string; kind: "error" | "info" } | null,
   busy: false,
   /** Monotonic tick so countdowns re-render. */
@@ -42,6 +43,9 @@ function onState(state: PhoneState): void {
   if (cs) app.csTimerBase = { value: cs.timeLeftMs, at: now };
   const q = state.queue;
   if (q && q.timeInQueue !== app.queueTimerBase.value) app.queueTimerBase = { value: q.timeInQueue, at: now };
+  const rc = state.readyCheck;
+  if (!rc) app.readyTimerBase = { value: -1, at: 0 };
+  else if (rc.timer !== app.readyTimerBase.value) app.readyTimerBase = { value: rc.timer, at: now };
 
   // (Re)load the champion list whenever the League client (re)connects.
   if (state.lcu === "connected" && (lastLcuStatus !== "connected" || app.champions.size === 0)) void loadChampions();
@@ -58,17 +62,42 @@ function unpair(): void {
   app.state = null;
 }
 
+/**
+ * A phone tab can stay open for days and never re-download the app, so after the connector is
+ * updated it would keep running old code. Compare our own script with the one index.html names now.
+ */
+async function checkForNewVersion(): Promise<void> {
+  try {
+    const own = new URL(import.meta.url).pathname;
+    if (!own.startsWith("/assets/")) return; // dev server
+    const html = await (await fetch("/", { cache: "no-store" })).text();
+    if (html.includes(own)) return;
+    const last = Number(sessionStorage.getItem("lolc.reloadedAt") ?? 0);
+    if (Date.now() - last < 30_000) return; // never loop
+    sessionStorage.setItem("lolc.reloadedAt", String(Date.now()));
+    location.reload();
+  } catch {
+    // offline or storage blocked: keep running the current version
+  }
+}
+
 export function start(): void {
   app.paired = !!api.initToken();
   if (app.paired) openSocket();
   window.setInterval(() => (app.now = performance.now()), 250);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") void checkForNewVersion();
+  });
 }
 
 function openSocket(): void {
   socket?.close();
   socket = api.connectSocket({
     onState,
-    onStatus: (s) => (app.socket = s),
+    onStatus: (s) => {
+      app.socket = s;
+      if (s === "open") void checkForNewVersion();
+    },
     onUnauthorized: () => {
       unpair();
       showToast("This phone isn't paired with the current connector session. Scan the QR or enter the code.", "info");
@@ -102,7 +131,15 @@ export async function run(name: api.ActionName, body?: Record<string, unknown>):
 export function champSelectSecondsLeft(): number {
   const base = app.csTimerBase;
   if (base.value < 0) return 0;
-  return Math.max(0, Math.ceil((base.value - (app.now - base.at)) / 1000));
+  // Round down like the League client does; rounding up showed one second more than the PC.
+  return Math.max(0, Math.floor((base.value - (app.now - base.at)) / 1000));
+}
+
+/** Seconds elapsed in the ready check (League sends whole seconds), counted up locally between pushes. */
+export function readyCheckElapsed(): number {
+  const base = app.readyTimerBase;
+  if (base.value < 0) return 0;
+  return base.value + Math.min(1, (app.now - base.at) / 1000);
 }
 
 export function queueSeconds(): number {
