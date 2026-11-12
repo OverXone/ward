@@ -11,7 +11,7 @@
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import { findHoverTarget, findMyActiveAction, type LcuAction, type LcuSession } from "./state/champ-select";
 import { log } from "./log";
-import { URI } from "./state/store";
+import { championIds, URI } from "./state/store";
 
 export class ActionError extends Error {
   constructor(
@@ -81,9 +81,9 @@ async function getSession(http: LcuHttp): Promise<LcuSession> {
 }
 
 async function allowedChampions(http: LcuHttp, ctx: ActionContext, type: string): Promise<Set<number>> {
-  const ids = await http.getOrNull<number[]>(type === "ban" ? URI.bannable : URI.pickable);
+  const ids = championIds(await http.getOrNull(type === "ban" ? URI.bannable : URI.pickable)) ?? [];
   const pushed = ctx.lists?.()[type === "ban" ? "bannable" : "pickable"] ?? [];
-  return new Set([...(Array.isArray(ids) ? ids : []), ...pushed].filter((n) => Number.isInteger(n) && n > 0));
+  return new Set([...ids, ...pushed].filter((n) => Number.isInteger(n) && n > 0));
 }
 
 async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number): Promise<void> {

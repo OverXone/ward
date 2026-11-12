@@ -68,6 +68,28 @@ const emptyRaw = (): Raw => ({
   bannable: null,
 });
 
+/** Champion ids from a list the client sent (integers, or integer strings), or null if it isn't a list. */
+export function championIds(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const ids: number[] = [];
+  for (const v of value) {
+    const n = typeof v === "string" && /^\d{1,6}$/.test(v) ? Number(v) : v;
+    if (Number.isInteger(n) && (n as number) > 0) ids.push(n as number);
+  }
+  return ids;
+}
+
+/** Short description of an unexpected answer's shape for the log (no secrets in these endpoints). */
+function describeAnswer(value: unknown): string {
+  if (value === null || value === undefined) return "nothing (error or 404)";
+  if (Array.isArray(value)) {
+    const sample = JSON.stringify(value.slice(0, 3)).slice(0, 80);
+    return `a list of ${value.length} (${sample})`;
+  }
+  if (typeof value === "object") return `an object with keys ${Object.keys(value).slice(0, 8).join(",") || "(none)"}`;
+  return `a ${typeof value} (${String(value).slice(0, 40)})`;
+}
+
 export function deriveLobby(lobby: RawLobby | null, queueName: string | null): LobbyView | null {
   if (!lobby) return null;
   const queueId = lobby.gameConfig?.queueId;
@@ -125,6 +147,7 @@ export class Store extends EventEmitter {
   private listsFetchedAt = 0;
   private listsFetching = false;
   private lastCsPhase: string | null = null;
+  private oddListsLogged = new Set<string>();
   state: PhoneState = this.derive();
 
   setLcuStatus(status: LcuStatus): void {
@@ -150,6 +173,8 @@ export class Store extends EventEmitter {
 
   /** The champion lists as League pushed them (events win over HTTP answers, see applyFetched). */
   championLists(): { pickable: readonly number[]; bannable: readonly number[] } {
+    // Only while champ select is on, so a list left over from an earlier one is never used.
+    if (!this.raw.session) return { pickable: [], bannable: [] };
     return { pickable: this.raw.pickable ?? [], bannable: this.raw.bannable ?? [] };
   }
 
@@ -177,6 +202,7 @@ export class Store extends EventEmitter {
     const session = this.raw.session;
     if (!session) {
       this.lastCsPhase = null;
+      this.oddListsLogged.clear();
       return;
     }
     const csPhase = session.timer?.phase ?? null;
@@ -231,14 +257,25 @@ export class Store extends EventEmitter {
 
   /** Applies an HTTP snapshot value (no recompute). */
   private applyFetched(key: Key, value: unknown): void {
-    // On a live client GET /bannable-champion-ids answered [] for the whole champ select while the
-    // websocket event carried every id. The lists are never legitimately empty mid champ select (a
-    // Delete event clears them at the end), so an empty answer never wipes a list we already have.
-    if ((key === "pickable" || key === "bannable") && this.raw[key]?.length) {
-      if (Array.isArray(value) && value.length === 0) return;
-      if (value === null && this.raw.session) return;
+    if (key === "pickable" || key === "bannable") {
+      const ids = championIds(value);
+      if (!ids?.length) this.noteOddListAnswer(key, value);
+      // On a live client (2026-11-12) the websocket event carried every bannable id while the HTTP
+      // answer for the same list didn't (and wiped it, so every ban was refused). The lists only
+      // empty when champ select ends, and a Delete event (or a reconnect) clears them then, so an
+      // HTTP answer never empties a list League pushed.
+      if (this.raw[key]?.length && !ids?.length) return;
+      this.raw[key] = ids;
+      return;
     }
     this.setRaw(key, value, false);
+  }
+
+  /** Logs (once per champ select) what the client answered when a list GET wasn't a list of ids. */
+  private noteOddListAnswer(key: "pickable" | "bannable", value: unknown): void {
+    if (!this.raw.session || this.oddListsLogged.has(key)) return;
+    this.oddListsLogged.add(key);
+    log.info(`GET ${key}-champion-ids answered ${describeAnswer(value)}; using League's pushed list instead`);
   }
 
   private setRaw(key: Key, value: unknown, recompute = true): void {
@@ -249,7 +286,7 @@ export class Store extends EventEmitter {
         break;
       case "pickable":
       case "bannable":
-        this.raw[key] = Array.isArray(value) ? value.filter((n): n is number => Number.isInteger(n)) : null;
+        this.raw[key] = championIds(value);
         break;
       case "session": {
         const s = value as LcuSession | null;
