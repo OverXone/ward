@@ -67,7 +67,29 @@ async function call(http: LcuHttp, method: HttpMethod, path: string, body?: unkn
   const res = await http.request(method, path, body);
   if (res.status >= 200 && res.status < 300) return res.status;
   if (res.status === 404 && method !== "GET") return 404;
-  throw new ActionError(502, lcuErrorMessage(res.body) ?? `League client refused (${res.status})`);
+  throw new ActionError(502, friendlyLcuError(lcuErrorMessage(res.body)) ?? `League client refused (${res.status})`);
+}
+
+/** League error codes seen on a live client, in words a player understands. */
+const LCU_ERRORS: Record<string, string> = {
+  // 2026-11-12: banning the champion a teammate had as their planned pick.
+  BAN_LOCK_FAILED_TEAMMATE_HOVERING_CHAMPION: "A teammate wants to play that champion, so League won't let you ban it. Choose another.",
+};
+
+/**
+ * Turns "Error response for PATCH /lol-.../actions/8: SOME_CODE" into a short sentence for the
+ * phone: known codes get a plain explanation, others become words, and the endpoint path is dropped.
+ */
+export function friendlyLcuError(message: string | null): string | null {
+  if (!message) return null;
+  const text = message.replace(/^Error response for [A-Z]+ \S+?:\s*/, "").trim();
+  const known = LCU_ERRORS[text];
+  if (known) return known;
+  if (/^[A-Z][A-Z0-9_]{3,}$/.test(text)) {
+    const words = text.toLowerCase().replace(/_/g, " ");
+    return `League refused: ${words}.`;
+  }
+  return text || null;
 }
 
 async function getPhase(http: LcuHttp): Promise<string | null> {
