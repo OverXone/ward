@@ -48,6 +48,13 @@ Options:
 - `--port <n>` changes the port (default 47800).
 - `--league-dir <dir>` uses only the lockfile in that folder.
 
+### Phone can't open the page?
+
+- **Brave:** allow the site's local network permission when Brave asks (or in the site settings).
+- Type `http://`, not `https://`. The connector logs a warning when a phone tries `https`.
+- The phone must be on the same home Wi-Fi (not guest Wi-Fi, not mobile data).
+- The connector logs every connection attempt and every refused request, so check its window.
+
 ### Without the game: mock client
 
 ```bash
