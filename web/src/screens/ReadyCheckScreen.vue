@@ -2,15 +2,17 @@
 import type { ReadyCheckView } from "@shared/phone-api";
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { readyCheckAlert, stopVibration } from "../alerts";
-import { run } from "../store";
+import { readyCheckElapsed, run } from "../store";
 
 const props = defineProps<{ readyCheck: ReadyCheckView }>();
 const busy = ref(false);
 
 // The client counts `timer` up; on a live client the ready check lasted ~10 s (2026-11-12).
 const READY_CHECK_SECONDS = 10;
-const secondsLeft = computed(() => Math.max(0, READY_CHECK_SECONDS - props.readyCheck.timer));
-const progress = computed(() => Math.min(100, (props.readyCheck.timer / READY_CHECK_SECONDS) * 100));
+// Counted locally between pushes and rounded down, so the phone doesn't trail the PC by a second.
+const elapsed = computed(() => readyCheckElapsed());
+const secondsLeft = computed(() => Math.max(0, Math.floor(READY_CHECK_SECONDS - elapsed.value)));
+const progress = computed(() => Math.min(100, (elapsed.value / READY_CHECK_SECONDS) * 100));
 const response = computed(() => props.readyCheck.playerResponse);
 
 onMounted(() => {
@@ -69,7 +71,7 @@ async function respond(accept: boolean) {
 .fill {
   height: 100%;
   background: var(--gold);
-  transition: width 1s linear;
+  transition: width 0.25s linear;
 }
 .actions {
   display: flex;
