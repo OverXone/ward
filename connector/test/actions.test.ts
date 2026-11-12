@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ActionError, runAction, type ActionName } from "../src/actions";
+import { ActionError, friendlyLcuError, runAction, type ActionName } from "../src/actions";
 import type { HttpMethod, LcuHttp, LcuResponse } from "../src/lcu/http";
 import { advanceTo, draftSession } from "./fixtures/sessions";
 
@@ -199,5 +199,22 @@ describe("champ select", () => {
     const lcu = csLcu(s);
     await expectError(run("champ-select/lock", undefined, lcu.http), 400);
     expect(lcu.writes()).toHaveLength(0);
+  });
+});
+
+describe("friendlyLcuError", () => {
+  it("explains the teammate-hover ban refusal and drops the endpoint path", () => {
+    const msg = friendlyLcuError(
+      "Error response for PATCH /lol-lobby-team-builder/champ-select/v1/session/actions/8: BAN_LOCK_FAILED_TEAMMATE_HOVERING_CHAMPION",
+    );
+    expect(msg).toMatch(/teammate wants to play that champion/);
+    expect(msg).not.toMatch(/lol-lobby|PATCH/);
+  });
+  it("turns unknown codes into words", () => {
+    expect(friendlyLcuError("Error response for POST /x/y: SOME_NEW_CODE")).toBe("League refused: some new code.");
+  });
+  it("keeps plain messages and handles none", () => {
+    expect(friendlyLcuError("Something broke")).toBe("Something broke");
+    expect(friendlyLcuError(null)).toBeNull();
   });
 });
