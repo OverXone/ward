@@ -148,6 +148,11 @@ export class Store extends EventEmitter {
     this.recompute();
   }
 
+  /** The champion lists as League pushed them (events win over HTTP answers, see applyFetched). */
+  championLists(): { pickable: readonly number[]; bannable: readonly number[] } {
+    return { pickable: this.raw.pickable ?? [], bannable: this.raw.bannable ?? [] };
+  }
+
   /** Latest raw session (used by actions as a fallback; actions normally re-fetch). */
   get session(): LcuSession | null {
     return this.raw.session;
@@ -226,10 +231,12 @@ export class Store extends EventEmitter {
 
   /** Applies an HTTP snapshot value (no recompute). */
   private applyFetched(key: Key, value: unknown): void {
-    // During champ select these lists are never legitimately empty (a Delete event clears them at the
-    // end), so an empty or failed answer must not wipe a list we already have.
-    if ((key === "pickable" || key === "bannable") && this.raw.session && this.raw[key]?.length) {
-      if (!Array.isArray(value) || value.length === 0) return;
+    // On a live client GET /bannable-champion-ids answered [] for the whole champ select while the
+    // websocket event carried every id. The lists are never legitimately empty mid champ select (a
+    // Delete event clears them at the end), so an empty answer never wipes a list we already have.
+    if ((key === "pickable" || key === "bannable") && this.raw[key]?.length) {
+      if (Array.isArray(value) && value.length === 0) return;
+      if (value === null && this.raw.session) return;
     }
     this.setRaw(key, value, false);
   }

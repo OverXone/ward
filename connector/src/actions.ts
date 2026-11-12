@@ -24,6 +24,12 @@ export class ActionError extends Error {
 
 export interface ActionContext {
   http: LcuHttp | null;
+  /**
+   * The pickable/bannable lists League pushed over its websocket. On a live client (2026-11-12)
+   * GET /bannable-champion-ids answered an empty list for the whole champ select while the
+   * event carried all 174 ids, so validation accepts an id if either source lists it.
+   */
+  lists?: () => { pickable: readonly number[]; bannable: readonly number[] };
 }
 
 type Input = Record<string, unknown>;
@@ -33,7 +39,7 @@ interface ActionDef {
   keys: readonly string[];
   /** Pure input checks, run before we even look at the client. */
   validate?(input: Input): void;
-  run(input: Input, http: LcuHttp): Promise<void>;
+  run(input: Input, http: LcuHttp, ctx: ActionContext): Promise<void>;
 }
 
 // ---------- validation helpers ----------
@@ -74,20 +80,21 @@ async function getSession(http: LcuHttp): Promise<LcuSession> {
   return s;
 }
 
-async function allowedChampions(http: LcuHttp, type: string): Promise<Set<number>> {
+async function allowedChampions(http: LcuHttp, ctx: ActionContext, type: string): Promise<Set<number>> {
   const ids = await http.getOrNull<number[]>(type === "ban" ? URI.bannable : URI.pickable);
-  return new Set(Array.isArray(ids) ? ids.filter((n) => Number.isInteger(n)) : []);
+  const pushed = ctx.lists?.()[type === "ban" ? "bannable" : "pickable"] ?? [];
+  return new Set([...(Array.isArray(ids) ? ids : []), ...pushed].filter((n) => Number.isInteger(n) && n > 0));
 }
 
-async function assertAllowed(http: LcuHttp, action: LcuAction, championId: number): Promise<void> {
-  const allowed = await allowedChampions(http, action.type);
+async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number): Promise<void> {
+  const allowed = await allowedChampions(http, ctx, action.type);
   if (!allowed.has(championId)) {
     throw new ActionError(400, action.type === "ban" ? "That champion can't be banned" : "That champion isn't pickable");
   }
 }
 
 /** Polls the session briefly until the action is completed (or gone, e.g. phase moved on). */
-export async function waitCompleted(http: LcuHttp, actionId: number, tries = 5, delayMs = 200): Promise<boolean> {
+export async function waitCompleted(http: LcuHttp, actionId: number, tries = 8, delayMs = 100): Promise<boolean> {
   for (let i = 0; i < tries; i++) {
     const s = await http.getOrNull<LcuSession>(URI.session);
     const a = s?.actions?.flat().find((x) => x.id === actionId);
@@ -140,39 +147,37 @@ const ACTIONS = {
   "champ-select/hover": {
     keys: ["championId"],
     validate: (input) => void championIdFrom(input),
-    async run(input, http) {
+    async run(input, http, ctx) {
       const championId = championIdFrom(input);
       const session = await getSession(http);
       const target = findHoverTarget(session);
       if (!target) throw new ActionError(409, "Nothing to pick or ban right now");
-      await assertAllowed(http, target, championId);
+      await assertAllowed(http, ctx, target, championId);
       const status = await call(http, "PATCH", actionPath(target.id), { championId });
       if (status === 404) throw new ActionError(409, "That action no longer exists");
     },
   },
   "champ-select/lock": {
     keys: [],
-    async run(_input, http) {
+    async run(_input, http, ctx) {
       const session = await getSession(http);
       const action = findMyActiveAction(session);
       if (!action) throw new ActionError(409, "It's not your turn");
       if (!(action.championId > 0)) throw new ActionError(409, "Select a champion first");
       const championId = action.championId;
-      await assertAllowed(http, action, championId);
+      await assertAllowed(http, ctx, action, championId);
       const path = actionPath(action.id);
 
-      // Verified on a live client (2026-11-12): POST .../complete can answer 2xx without
-      // locking, e.g. when the champion was only declared as intent during planning.
-      // So: re-hover on the active action, complete, then check the session really changed.
-      await call(http, "PATCH", path, { championId });
-      const status = await call(http, "POST", `${path}/complete`);
-      if (status !== 404 && (await waitCompleted(http, action.id))) return;
-      log.warn(`Lock-in: POST /complete answered ${status} but the action is still open; trying PATCH {completed:true}`);
-
-      // Older clients (and Mimic): PATCH { championId, completed: true }.
-      const fallback = await call(http, "PATCH", path, { championId, completed: true });
-      if (fallback === 404) throw new ActionError(409, "That action no longer exists");
+      // On a live client (2026-11-12) POST .../complete answered 204 without locking, every time,
+      // while PATCH { championId, completed: true } (what Mimic does) worked. So PATCH first, then
+      // check the session really changed; POST /complete is only the fallback.
+      const status = await call(http, "PATCH", path, { championId, completed: true });
+      if (status === 404) throw new ActionError(409, "That action no longer exists");
       if (await waitCompleted(http, action.id)) return;
+      log.warn("Lock-in: PATCH {completed:true} didn't lock; trying POST /complete");
+
+      const fallback = await call(http, "POST", `${path}/complete`);
+      if (fallback !== 404 && (await waitCompleted(http, action.id))) return;
       throw new ActionError(502, "League didn't accept the lock-in. Lock in on your PC.");
     },
   },
@@ -191,7 +196,7 @@ export async function runAction(name: ActionName, body: unknown, ctx: ActionCont
   def.validate?.(input);
   if (!ctx.http) throw new ActionError(503, "League client not connected");
   try {
-    await def.run(input, ctx.http);
+    await def.run(input, ctx.http, ctx);
   } catch (e) {
     if (e instanceof ActionError) throw e;
     throw new ActionError(502, "Couldn't reach the League client");
