@@ -53,6 +53,7 @@ const filtered = computed(() => {
       <button v-for="c in filtered.unavailable" :key="'u' + c.id" class="cell unavailable" disabled>
         <ChampIcon :id="c.id" :size="64" banned />
         <span class="cname">{{ c.name }}</span>
+        <span class="why">{{ mode === "ban" ? "Can't ban" : "Not owned or taken" }}</span>
       </button>
     </div>
     <p v-if="!filtered.available.length && !filtered.unavailable.length" class="none">
@@ -107,7 +108,13 @@ const filtered = computed(() => {
   padding: 0 2px;
 }
 .unavailable {
-  opacity: 0.5;
+  opacity: 0.55;
+}
+.why {
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.1;
+  text-align: center;
 }
 .none {
   color: var(--muted);
