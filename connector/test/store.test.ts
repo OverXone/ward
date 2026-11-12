@@ -51,6 +51,21 @@ describe("store champion lists", () => {
     expect(store.state.champSelect?.bannableChampionIds).toEqual(BANNABLE);
   });
 
+  it("keeps the pushed ban list when GET answers [] afterwards (live client, 2026-11-12)", async () => {
+    const lcu = fakeHttp({ [URI.phase]: "ReadyCheck", [URI.pickable]: PICKABLE, [URI.bannable]: [] });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    store.handleEvent(event(URI.bannable, BANNABLE)); // Create event with every id
+    lcu.answers[URI.session] = advanceTo(draftSession(), 0);
+    lcu.answers[URI.phase] = "ChampSelect";
+    store.handleEvent(event(URI.phase, "ChampSelect")); // phase change -> full snapshot, GET bannable = []
+    for (let i = 0; i < 4; i++) await tick();
+    expect(store.state.champSelect?.bannableChampionIds).toEqual(BANNABLE);
+    expect(store.championLists().bannable).toEqual(BANNABLE);
+  });
+
   it("re-fetches a missing list during champ select", async () => {
     const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [URI.pickable]: PICKABLE, [URI.bannable]: null });
     const store = new Store();
