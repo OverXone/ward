@@ -31,7 +31,14 @@ watch(
 const selected = computed(() => pending.value || serverSelected.value);
 
 const enabled = computed(() => new Set(mode.value === "ban" ? props.cs.bannableChampionIds : props.cs.pickableChampionIds));
-const champions = computed(() => [...app.champions.values()].sort((a, b) => a.name.localeCompare(b.name)));
+// The client's champion list also contains special-mode copies (e.g. id 60051 "Caitlyn"),
+// so only show ids the client lists as pickable or bannable in this champ select.
+const playable = computed(() => new Set([...props.cs.pickableChampionIds, ...props.cs.bannableChampionIds]));
+const champions = computed(() =>
+  [...app.champions.values()]
+    .filter((c) => (playable.value.size ? playable.value.has(c.id) : c.id < 10000))
+    .sort((a, b) => a.name.localeCompare(b.name)),
+);
 
 const busy = ref(false);
 
