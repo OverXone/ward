@@ -3,6 +3,7 @@
  *
  *   npm run mock-lcu                       start (prints the --league-dir to pass to the connector)
  *   npm run mock-lcu -- --no-complete      make POST .../complete return 404 (tests the PATCH fallback)
+ *   npm run mock-lcu -- --lazy-complete    make POST .../complete answer 204 without locking (like a live client did)
  *
  * Serves HTTPS + WSS on 127.0.0.1 with a throwaway self-signed cert and writes a
  * lockfile into a temp folder. Shapes are modelled on the real client but
@@ -22,6 +23,8 @@ import selfsigned from "selfsigned";
 import { WebSocketServer, WebSocket } from "ws";
 
 const noComplete = process.argv.includes("--no-complete");
+// Imitates what a live client did on 2026-11-12: POST .../complete answers 204 but locks nothing.
+const lazyComplete = process.argv.includes("--lazy-complete");
 
 // ---------- static data ----------
 
@@ -415,6 +418,7 @@ async function handle(req: any, res: any): Promise<void> {
     if (a.actorCellId !== LOCAL_CELL) return lcuError(res, 403, "Not your action");
     if (act[2]) {
       if (noComplete) return lcuError(res, 404, "Invalid URI format");
+      if (lazyComplete) return void res.writeHead(204).end();
       if (m !== "POST") return lcuError(res, 405, "Method not allowed");
       if (!a.isInProgress || !(a.championId > 0)) return lcuError(res, 400, "Action not completable");
       complete(a);
