@@ -7,8 +7,9 @@ import { run } from "../store";
 const props = defineProps<{ readyCheck: ReadyCheckView }>();
 const busy = ref(false);
 
-// The client counts the ready check up from 0 to ~12 seconds.
-const READY_CHECK_SECONDS = 12;
+// The client counts `timer` up; on a live client the ready check lasted ~10 s (2026-11-12).
+const READY_CHECK_SECONDS = 10;
+const secondsLeft = computed(() => Math.max(0, READY_CHECK_SECONDS - props.readyCheck.timer));
 const progress = computed(() => Math.min(100, (props.readyCheck.timer / READY_CHECK_SECONDS) * 100));
 const response = computed(() => props.readyCheck.playerResponse);
 
@@ -33,6 +34,7 @@ async function respond(accept: boolean) {
         {{ response === "Accepted" ? "Accepted" : response === "Declined" ? "Declined" : "Ready?" }}
       </h1>
       <p class="sub" v-if="response === 'Accepted'">Waiting for the other players…</p>
+      <p class="sub mono" v-else-if="response === 'None'">{{ secondsLeft }} s left</p>
       <div class="bar" role="progressbar" :aria-valuenow="readyCheck.timer" aria-valuemin="0" :aria-valuemax="READY_CHECK_SECONDS">
         <div class="fill" :style="{ width: progress + '%' }"></div>
       </div>
