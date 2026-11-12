@@ -245,5 +245,27 @@ export function createHttpServer(deps: ServerDeps): http.Server {
   server.headersTimeout = 10_000;
   server.requestTimeout = 15_000;
   server.maxHeadersCount = 40;
+
+  // Diagnostics: log the first raw connection per address, and explain malformed
+  // requests (most often a browser trying https:// on this plain-http server).
+  const seen = new Set<string>();
+  server.on("connection", (socket) => {
+    const ip = normalizeRemote(socket.remoteAddress);
+    if (seen.has(ip) || seen.size > 100) return;
+    seen.add(ip);
+    log.info(`Incoming connection from ${ip}`);
+  });
+  server.on("clientError", (err: NodeJS.ErrnoException, socket) => {
+    const ip = normalizeRemote((socket as import("node:net").Socket).remoteAddress);
+    const raw = (err as { rawPacket?: Buffer }).rawPacket;
+    const tls = raw?.[0] === 0x16;
+    log.warn(
+      tls
+        ? `${ip} tried to connect with https://. Use http://${deps.host}:${deps.port} (plain http) on the phone.`
+        : `Malformed request from ${ip}: ${err.code ?? err.message}`,
+    );
+    if (socket.writable) socket.end("HTTP/1.1 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+    else socket.destroy();
+  });
   return server;
 }
