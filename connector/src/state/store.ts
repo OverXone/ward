@@ -7,6 +7,7 @@
 
 import { EventEmitter } from "node:events";
 import type { LcuHttp } from "../lcu/http";
+import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
 import type { LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
 import { deriveChampSelect, type LcuSession } from "./champ-select";
@@ -119,6 +120,11 @@ export class Store extends EventEmitter {
   private queueNames = new Map<number, string>();
   private lastJson = "";
   private snapshotRetry: NodeJS.Timeout | null = null;
+  /** Bumped by every live event, so a slower HTTP snapshot never overwrites newer event data. */
+  private versions = new Map<Key, number>();
+  private listsFetchedAt = 0;
+  private listsFetching = false;
+  private lastCsPhase: string | null = null;
   state: PhoneState = this.derive();
 
   setLcuStatus(status: LcuStatus): void {
@@ -129,6 +135,7 @@ export class Store extends EventEmitter {
   attach(http: LcuHttp): void {
     this.http = http;
     this.raw = emptyRaw();
+    this.lastCsPhase = null;
     this.queueNames.clear();
     void this.refreshAll();
   }
@@ -150,19 +157,64 @@ export class Store extends EventEmitter {
     const key = KEY_BY_URI.get(e.uri);
     if (!key) return;
     const value = e.eventType === "Delete" ? null : e.data;
+    this.versions.set(key, (this.versions.get(key) ?? 0) + 1);
     this.setRaw(key, value);
+    if (key === "session") this.checkChampionLists();
+  }
+
+  /**
+   * The pickable/bannable lists only get events when they change, so if one is ever missed or a
+   * snapshot came back empty, the phone would grey out every champion for the whole champ select.
+   * Re-fetch them when the champ-select phase changes (planning -> bans -> picks) and whenever
+   * one is missing, at most every 2 s.
+   */
+  private checkChampionLists(): void {
+    const session = this.raw.session;
+    if (!session) {
+      this.lastCsPhase = null;
+      return;
+    }
+    const csPhase = session.timer?.phase ?? null;
+    const phaseChanged = csPhase !== this.lastCsPhase;
+    this.lastCsPhase = csPhase;
+    const missing = !this.raw.pickable?.length || !this.raw.bannable?.length;
+    if (!phaseChanged && !missing) return;
+    if (this.listsFetching || (!phaseChanged && Date.now() - this.listsFetchedAt < 2000)) return;
+    void this.refreshChampionLists(csPhase);
+  }
+
+  private async refreshChampionLists(csPhase: string | null): Promise<void> {
+    const http = this.http;
+    if (!http) return;
+    this.listsFetching = true;
+    this.listsFetchedAt = Date.now();
+    try {
+      const before = { pickable: this.versions.get("pickable") ?? 0, bannable: this.versions.get("bannable") ?? 0 };
+      const [pickable, bannable] = await Promise.all([http.getOrNull(URI.pickable), http.getOrNull(URI.bannable)]);
+      if (http !== this.http) return;
+      if ((this.versions.get("pickable") ?? 0) === before.pickable) this.setRaw("pickable", pickable, false);
+      if ((this.versions.get("bannable") ?? 0) === before.bannable) this.setRaw("bannable", bannable, false);
+      this.recompute();
+      const cs = this.state.champSelect;
+      if (cs) log.info(`Champ select ${csPhase ?? "?"}: ${cs.pickableChampionIds.length} pickable, ${cs.bannableChampionIds.length} bannable`);
+    } finally {
+      this.listsFetching = false;
+    }
   }
 
   /** Fetches every watched endpoint. Retries until the client's plugins are up. */
   async refreshAll(): Promise<void> {
     const http = this.http;
     if (!http) return;
+    const before = new Map(this.versions);
     const entries = await Promise.all(
       (Object.keys(URI) as Key[]).map(async (k) => [k, await http.getOrNull(URI[k])] as const),
     );
     if (http !== this.http) return; // reconnected meanwhile
-    for (const [k, v] of entries) this.setRaw(k, v, false);
+    // Skip anything a live event updated while these requests were in flight: the event is newer.
+    for (const [k, v] of entries) if ((this.versions.get(k) ?? 0) === (before.get(k) ?? 0)) this.setRaw(k, v, false);
     this.recompute();
+    this.checkChampionLists();
 
     if (this.snapshotRetry) clearTimeout(this.snapshotRetry);
     this.snapshotRetry = null;
