@@ -143,26 +143,57 @@ describe("champ select", () => {
     await expectError(run("champ-select/lock", undefined, csLcu(advanceTo(draftSession(), 4)).http), 409, /Select a champion/);
   });
 
-  it("locks with POST /complete", async () => {
+  /** My pick turn with `champ` hovered; routes decide what the fake client does on each call. */
+  function lockSetup(champ: number, routes: (mine: { id: number; completed: boolean }) => Record<string, Route>) {
     const s = advanceTo(draftSession(), 4);
     const mine = s.actions[4]!.find((a) => a.actorCellId === 2)!;
-    mine.championId = 103;
-    const lcu = csLcu(s, { [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok() });
+    mine.championId = champ;
+    const path = `/lol-champ-select/v1/session/actions/${mine.id}`;
+    return { lcu: csLcu(s, routes(mine)), path };
+  }
+
+  it("re-hovers, completes, and verifies the lock", async () => {
+    const { lcu, path } = lockSetup(103, (mine) => ({
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(),
+      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: () => ((mine.completed = true), { status: 204 }),
+    }));
     await run("champ-select/lock", {}, lcu.http);
-    expect(lcu.writes()).toEqual([{ method: "POST", path: `/lol-champ-select/v1/session/actions/${mine.id}/complete`, body: undefined }]);
+    expect(lcu.writes()).toEqual([
+      { method: "PATCH", path, body: { championId: 103 } },
+      { method: "POST", path: `${path}/complete`, body: undefined },
+    ]);
   });
 
-  it("falls back to PATCH {completed:true} when /complete is 404", async () => {
-    const s = advanceTo(draftSession(), 4);
-    const mine = s.actions[4]!.find((a) => a.actorCellId === 2)!;
-    mine.championId = 222;
-    const lcu = csLcu(s, { [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok() });
+  it("falls back to PATCH {completed:true} when /complete says OK but doesn't lock (seen on a live client)", async () => {
+    const { lcu, path } = lockSetup(222, (mine) => ({
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
+        if ((body as { completed?: boolean }).completed) mine.completed = true;
+        return { status: 204 };
+      },
+      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok(), // 204, no effect
+    }));
     await run("champ-select/lock", undefined, lcu.http);
-    expect(lcu.writes().map((w) => `${w.method} ${w.path}`)).toEqual([
-      `POST /lol-champ-select/v1/session/actions/${mine.id}/complete`,
-      `PATCH /lol-champ-select/v1/session/actions/${mine.id}`,
-    ]);
-    expect(lcu.writes()[1]?.body).toEqual({ championId: 222, completed: true });
+    expect(lcu.writes().map((w) => `${w.method} ${w.path}`)).toEqual([`PATCH ${path}`, `POST ${path}/complete`, `PATCH ${path}`]);
+    expect(lcu.writes()[2]?.body).toEqual({ championId: 222, completed: true });
+  });
+
+  it("falls back when /complete is 404 (older clients)", async () => {
+    const { lcu } = lockSetup(222, (mine) => ({
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
+        if ((body as { completed?: boolean }).completed) mine.completed = true;
+        return { status: 204 };
+      },
+    }));
+    await run("champ-select/lock", undefined, lcu.http);
+    expect(lcu.writes()).toHaveLength(3);
+  });
+
+  it("reports an error instead of pretending, when nothing locks", async () => {
+    const { lcu } = lockSetup(103, (mine) => ({
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(),
+      [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok(),
+    }));
+    await expectError(run("champ-select/lock", undefined, lcu.http), 502, /didn't accept/);
   });
 
   it("re-validates the hovered champion before locking", async () => {
