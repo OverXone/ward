@@ -12,7 +12,7 @@
     "dev": "npm run dev -w connector --",
     "events": "npm run events -w connector --",
     "mock-lcu": "npm run mock-lcu -w connector --",
-    "smoke": "npm run smoke -w connector",
+    "smoke": "npm run smoke -w connector --",
     "test": "npm test -w connector",
     "typecheck": "npm run typecheck -w connector",
     "build:web": "npm run build -w web",
