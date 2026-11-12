@@ -97,4 +97,45 @@ describe("store champion lists", () => {
     await tick();
     expect(lcu.gets.filter((g) => g === URI.bannable).length).toBe(before + 1);
   });
+
+  // On the live client the pushed list was still wiped, so the HTTP answer was neither [] nor 404.
+  it.each([
+    ["an object", {}],
+    ["a list of objects", [{ championId: 51 }]],
+    ["a string", "nope"],
+    ["nothing, before the session exists", null],
+  ])("keeps the pushed ban list when GET answers %s", async (_label, answer) => {
+    const lcu = fakeHttp({ [URI.phase]: "ReadyCheck", [URI.pickable]: null, [URI.bannable]: null });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    // Real order (2026-11-12): the lists are created before the session, then the phase changes.
+    store.handleEvent({ uri: URI.pickable, eventType: "Create", data: PICKABLE });
+    store.handleEvent({ uri: URI.bannable, eventType: "Create", data: BANNABLE });
+    lcu.answers[URI.bannable] = answer;
+    void store.refreshAll(); // a snapshot answering before the session exists
+    await tick();
+    lcu.answers[URI.session] = advanceTo(draftSession(), 0);
+    store.handleEvent({ uri: URI.session, eventType: "Create", data: lcu.answers[URI.session] });
+    lcu.answers[URI.phase] = "ChampSelect";
+    store.handleEvent(event(URI.phase, "ChampSelect"));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(store.championLists().bannable).toEqual(BANNABLE);
+    expect(store.state.champSelect?.bannableChampionIds).toEqual(BANNABLE);
+  });
+
+  it("a Delete event still clears the lists, and old lists are never used outside champ select", async () => {
+    const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [URI.session]: advanceTo(draftSession(), 0), [URI.pickable]: PICKABLE, [URI.bannable]: BANNABLE });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    for (let i = 0; i < 3; i++) await tick();
+    expect(store.championLists().bannable).toEqual(BANNABLE);
+    store.handleEvent({ uri: URI.session, eventType: "Delete", data: null });
+    expect(store.championLists().bannable).toEqual([]);
+    store.handleEvent({ uri: URI.bannable, eventType: "Delete", data: [] });
+    store.handleEvent({ uri: URI.session, eventType: "Create", data: advanceTo(draftSession(), 0) });
+    expect(store.championLists().bannable).toEqual([]);
+  });
 });
