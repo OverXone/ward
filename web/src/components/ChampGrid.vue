@@ -9,6 +9,8 @@ const props = defineProps<{
   enabled: Set<number>;
   selected: number;
   mode: "pick" | "ban";
+  /** Ids that can't be chosen for a specific reason (shown greyed with that reason when searching). */
+  reasons?: Map<number, string>;
 }>();
 const emit = defineEmits<{ choose: [id: number] }>();
 
@@ -18,9 +20,9 @@ const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 const filtered = computed(() => {
   const q = fold(search.value);
   const matches = props.champions.filter((c) => !q || fold(c.name).includes(q) || fold(c.alias).includes(q));
-  const available = matches.filter((c) => props.enabled.has(c.id));
+  const available = matches.filter((c) => props.enabled.has(c.id) && !props.reasons?.has(c.id));
   // Unavailable champions only appear when searching, greyed out, so you can see why they're missing.
-  const unavailable = q ? matches.filter((c) => !props.enabled.has(c.id)) : [];
+  const unavailable = q ? matches.filter((c) => !props.enabled.has(c.id) || props.reasons?.has(c.id)) : [];
   return { available, unavailable };
 });
 </script>
@@ -53,7 +55,7 @@ const filtered = computed(() => {
       <button v-for="c in filtered.unavailable" :key="'u' + c.id" class="cell unavailable" disabled>
         <ChampIcon :id="c.id" :size="64" banned />
         <span class="cname">{{ c.name }}</span>
-        <span class="why">{{ mode === "ban" ? "Can't ban" : "Not owned or taken" }}</span>
+        <span class="why">{{ reasons?.get(c.id) ?? (mode === "ban" ? "Can't ban" : "Not owned or taken") }}</span>
       </button>
     </div>
     <p v-if="!filtered.available.length && !filtered.unavailable.length" class="none">

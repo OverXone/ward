@@ -88,6 +88,7 @@ const reconnecting = computed(() => app.paired && app.state && app.socket !== "o
   padding: 12px 14px;
   border-radius: 12px;
   font-size: 15px;
+  overflow-wrap: anywhere;
   background: #3b1416;
   border: 1px solid var(--danger);
 }

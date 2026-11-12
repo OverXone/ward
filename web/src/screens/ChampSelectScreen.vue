@@ -46,6 +46,22 @@ const enabled = computed(() => {
   return new Set(list.length ? list : champions.value.map((c) => c.id));
 });
 
+// League refuses to ban a champion a teammate is hovering or plans to play
+// (BAN_LOCK_FAILED_TEAMMATE_HOVERING_CHAMPION on a live client, 2026-11-12).
+const teammateWants = computed(() => {
+  const ids = new Set<number>();
+  for (const p of props.cs.myTeam) {
+    if (p.isMe) continue;
+    if (p.championId > 0) ids.add(p.championId);
+    if (p.pickIntentId > 0) ids.add(p.pickIntentId);
+  }
+  return ids;
+});
+const reasons = computed(() =>
+  mode.value === "ban" ? new Map([...teammateWants.value].map((id) => [id, "Teammate's pick"])) : undefined,
+);
+const banBlocked = computed(() => props.cs.myTurn?.type === "ban" && teammateWants.value.has(serverSelected.value));
+
 const busy = ref(false);
 
 async function choose(id: number) {
@@ -61,7 +77,7 @@ async function lock() {
   busy.value = false;
 }
 
-const canLock = computed(() => !!props.cs.myTurn && serverSelected.value > 0 && !busy.value);
+const canLock = computed(() => !!props.cs.myTurn && serverSelected.value > 0 && !busy.value && !banBlocked.value);
 
 const headline = computed(() => {
   const cs = props.cs;
@@ -131,6 +147,7 @@ const seconds = computed(() => champSelectSecondsLeft());
       :enabled="enabled"
       :selected="selected"
       :mode="mode"
+      :reasons="reasons"
       @choose="choose"
     />
 
@@ -138,6 +155,7 @@ const seconds = computed(() => champSelectSecondsLeft());
       <ChampIcon :id="serverSelected" :size="52" />
       <button class="btn btn-huge lock" :class="cs.myTurn.type === 'ban' ? 'btn-danger' : 'btn-accept'" :disabled="!canLock" @click="lock">
         <template v-if="!serverSelected">{{ cs.myTurn.type === "ban" ? "Choose a ban" : "Choose a champion" }}</template>
+        <template v-else-if="banBlocked">A teammate wants {{ championName(serverSelected) }}</template>
         <template v-else>{{ cs.myTurn.type === "ban" ? "Ban" : "Lock in" }} {{ championName(serverSelected) }}</template>
       </button>
     </div>
