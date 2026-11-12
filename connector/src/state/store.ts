@@ -192,8 +192,8 @@ export class Store extends EventEmitter {
       const before = { pickable: this.versions.get("pickable") ?? 0, bannable: this.versions.get("bannable") ?? 0 };
       const [pickable, bannable] = await Promise.all([http.getOrNull(URI.pickable), http.getOrNull(URI.bannable)]);
       if (http !== this.http) return;
-      if ((this.versions.get("pickable") ?? 0) === before.pickable) this.setRaw("pickable", pickable, false);
-      if ((this.versions.get("bannable") ?? 0) === before.bannable) this.setRaw("bannable", bannable, false);
+      if ((this.versions.get("pickable") ?? 0) === before.pickable) this.applyFetched("pickable", pickable);
+      if ((this.versions.get("bannable") ?? 0) === before.bannable) this.applyFetched("bannable", bannable);
       this.recompute();
       const cs = this.state.champSelect;
       if (cs) log.info(`Champ select ${csPhase ?? "?"}: ${cs.pickableChampionIds.length} pickable, ${cs.bannableChampionIds.length} bannable`);
@@ -212,7 +212,7 @@ export class Store extends EventEmitter {
     );
     if (http !== this.http) return; // reconnected meanwhile
     // Skip anything a live event updated while these requests were in flight: the event is newer.
-    for (const [k, v] of entries) if ((this.versions.get(k) ?? 0) === (before.get(k) ?? 0)) this.setRaw(k, v, false);
+    for (const [k, v] of entries) if ((this.versions.get(k) ?? 0) === (before.get(k) ?? 0)) this.applyFetched(k, v);
     this.recompute();
     this.checkChampionLists();
 
@@ -222,6 +222,16 @@ export class Store extends EventEmitter {
       // gameflow plugin not loaded yet (client still booting)
       this.snapshotRetry = setTimeout(() => void this.refreshAll(), 3000);
     }
+  }
+
+  /** Applies an HTTP snapshot value (no recompute). */
+  private applyFetched(key: Key, value: unknown): void {
+    // During champ select these lists are never legitimately empty (a Delete event clears them at the
+    // end), so an empty or failed answer must not wipe a list we already have.
+    if ((key === "pickable" || key === "bannable") && this.raw.session && this.raw[key]?.length) {
+      if (!Array.isArray(value) || value.length === 0) return;
+    }
+    this.setRaw(key, value, false);
   }
 
   private setRaw(key: Key, value: unknown, recompute = true): void {
