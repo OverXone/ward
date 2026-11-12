@@ -216,7 +216,7 @@ function toChampSelect(): void {
   const member = (cell: number) => ({
     cellId: cell,
     championId: 0,
-    championPickIntent: 0,
+    championPickIntent: cell === 3 ? 51 : 0, // AdcMain plans Caitlyn: League refuses to let teammates ban her
     assignedPosition: positions[cell % 5],
     gameName: cell < 5 ? ["Teemo Enjoyer", "JungleDiff", "", "AdcMain", "WardBot"][cell] : "",
     tagLine: "EUW",
