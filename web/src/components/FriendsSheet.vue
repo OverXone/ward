@@ -81,8 +81,11 @@ async function invite(f: FriendOption) {
   color: var(--muted);
 }
 .invite {
+  width: auto;
+  flex: none;
   min-height: 44px;
   padding: 0 18px;
+  font-size: 16px;
 }
 .note {
   margin: 0;
