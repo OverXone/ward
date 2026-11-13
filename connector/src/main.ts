@@ -14,6 +14,7 @@ import QRCode from "qrcode";
 import { Champions } from "./champions";
 import { runEventsMode } from "./cli/events";
 import { LcuManager } from "./lcu/manager";
+import { Loadout } from "./loadout";
 import { addSecret, log } from "./log";
 import { WATCHED_URIS, Store } from "./state/store";
 import { staticFiles } from "./server/assets";
@@ -90,17 +91,20 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
   const limiter = new FailureLimiter();
   const store = new Store();
   const champions = new Champions();
+  const loadout = new Loadout();
   const manager = new LcuManager({ leagueDir: opts.leagueDir });
 
   manager.on("status", (s) => store.setLcuStatus(s));
   manager.on("connected", (http, creds) => {
     store.attach(http);
     champions.attach(http);
+    loadout.attach(http);
     log.info(`League client connected (port ${creds.port}, found via ${creds.source}).`);
   });
   manager.on("disconnected", () => {
     store.detach();
     champions.detach();
+    loadout.attach(null);
     log.info("League client closed. Waiting for it to start again...");
   });
   manager.on("discovery", (r) => {
@@ -118,6 +122,7 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     pairing,
     limiter,
     champions,
+    loadout,
     store,
     getLcu: () => manager.http,
     staticFiles: staticFiles(),

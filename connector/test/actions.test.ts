@@ -288,6 +288,48 @@ describe("swaps", () => {
   });
 });
 
+describe("loadout", () => {
+  const loadout = {
+    availableSpells: async () => [{ id: 4 }, { id: 14 }, { id: 12 }],
+    selectableSkinIds: async () => new Set([103000, 103001, 103021]),
+  };
+  const lcu = () =>
+    fakeLcu({
+      "GET /lol-champ-select/v1/session": ok(draftSession()),
+      "PATCH /lol-champ-select/v1/session/my-selection": ok(),
+    });
+
+  it("sets two available spells", async () => {
+    const l = lcu();
+    await runAction("champ-select/spells", { spell1Id: 12, spell2Id: 4 }, { http: l.http, loadout });
+    expect(l.writes()).toEqual([{ method: "PATCH", path: "/lol-champ-select/v1/session/my-selection", body: { spell1Id: 12, spell2Id: 4 } }]);
+  });
+
+  it("refuses the same spell twice, spells not in this game, and an unreadable spell list", async () => {
+    const l = lcu();
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: 4 }, { http: l.http, loadout }), 400, /different/);
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: 32 }, { http: l.http, loadout }), 400, /isn't available/);
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: "14" }, { http: l.http, loadout }), 400, /spell2Id/);
+    const blind = { ...loadout, availableSpells: async () => null };
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: 14 }, { http: l.http, loadout: blind }), 503);
+    expect(l.writes()).toHaveLength(0);
+  });
+
+  it("sets a usable skin or chroma, nothing else", async () => {
+    const l = lcu();
+    await runAction("champ-select/skin", { skinId: 103021 }, { http: l.http, loadout });
+    expect(l.writes()).toEqual([{ method: "PATCH", path: "/lol-champ-select/v1/session/my-selection", body: { selectedSkinId: 103021 } }]);
+    await expectError(runAction("champ-select/skin", { skinId: 103003 }, { http: l.http, loadout }), 400);
+    await expectError(runAction("champ-select/skin", { skinId: 103001, wardSkinId: 1 }, { http: l.http, loadout }), 400, /unexpected/);
+  });
+
+  it("needs champion select", async () => {
+    const l = fakeLcu({});
+    await expectError(runAction("champ-select/skin", { skinId: 103001 }, { http: l.http, loadout }), 409);
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: 14 }, { http: l.http, loadout }), 409);
+  });
+});
+
 describe("friendlyLcuError", () => {
   it("explains the teammate-hover ban refusal and drops the endpoint path", () => {
     const msg = friendlyLcuError(

@@ -37,6 +37,32 @@ export interface ActionContext {
    * GET /bannable-champion-ids with [-1], so a connector that (re)connects mid champ select has none.
    */
   knownChampions?: () => Promise<readonly { id: number }[] | null>;
+  /** Spells and skins the client says I can use right now (see loadout.ts). */
+  loadout?: {
+    availableSpells(): Promise<readonly { id: number }[] | null>;
+    selectableSkinIds(): Promise<Set<number> | null>;
+  };
+}
+
+const MY_SELECTION = "/lol-champ-select/v1/session/my-selection";
+
+function positiveInt(input: Input, key: string): number {
+  const v = input[key];
+  if (typeof v !== "number" || !Number.isInteger(v) || v <= 0 || v > 100_000_000) {
+    throw new ActionError(400, `${key} must be a positive integer`);
+  }
+  return v;
+}
+
+function spellsFrom(input: Input): [number, number] {
+  const spells: [number, number] = [positiveInt(input, "spell1Id"), positiveInt(input, "spell2Id")];
+  if (spells[0] === spells[1]) throw new ActionError(400, "Pick two different spells");
+  return spells;
+}
+
+async function assertInChampSelect(http: LcuHttp): Promise<void> {
+  const s = await getSession(http);
+  if (s.isSpectating) throw new ActionError(409, "You're spectating this champion select");
 }
 
 type Input = Record<string, unknown>;
@@ -275,6 +301,30 @@ const ACTIONS = {
       const fallback = await call(http, "POST", `${path}/complete`);
       if (fallback !== 404 && (await waitCompleted(http, action.id))) return;
       throw new ActionError(502, "League didn't accept the lock-in. Lock in on your PC.");
+    },
+  },
+  "champ-select/spells": {
+    keys: ["spell1Id", "spell2Id"],
+    validate: (input) => void spellsFrom(input),
+    async run(input, http, ctx) {
+      const [spell1Id, spell2Id] = spellsFrom(input);
+      await assertInChampSelect(http);
+      const available = await ctx.loadout?.availableSpells();
+      if (!available?.length) throw new ActionError(503, "Couldn't read your summoner spells from League");
+      const ids = new Set(available.map((s) => s.id));
+      if (!ids.has(spell1Id) || !ids.has(spell2Id)) throw new ActionError(400, "That spell isn't available in this game");
+      if ((await call(http, "PATCH", MY_SELECTION, { spell1Id, spell2Id })) === 404) throw new ActionError(409, "Not in champion select");
+    },
+  },
+  "champ-select/skin": {
+    keys: ["skinId"],
+    validate: (input) => void positiveInt(input, "skinId"),
+    async run(input, http, ctx) {
+      const skinId = positiveInt(input, "skinId");
+      await assertInChampSelect(http);
+      const ids = await ctx.loadout?.selectableSkinIds();
+      if (!ids?.has(skinId)) throw new ActionError(400, "You can't use that skin right now");
+      if ((await call(http, "PATCH", MY_SELECTION, { selectedSkinId: skinId })) === 404) throw new ActionError(409, "Not in champion select");
     },
   },
   "champ-select/swap/accept": swapAction("accept"),

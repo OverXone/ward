@@ -9,6 +9,7 @@ import http from "node:http";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 import { Champions } from "../src/champions";
+import { Loadout } from "../src/loadout";
 import { FailureLimiter, generateToken, Pairing } from "../src/server/auth";
 import { createHttpServer, expectedHost } from "../src/server/http";
 import { lanCandidates } from "../src/server/net";
@@ -42,6 +43,7 @@ describe.skipIf(!lanIp)("LAN server", () => {
       pairing,
       limiter: new FailureLimiter(10, 60_000),
       champions: new Champions(),
+      loadout: new Loadout(),
       store,
       getLcu: () => null,
       staticFiles: new Map([["/index.html", { contentType: "text/html", body: Buffer.from("<h1>ui</h1>"), immutable: false }]]),

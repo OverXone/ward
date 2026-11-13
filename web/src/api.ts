@@ -3,7 +3,7 @@
  * whitelisted actions and champion icons.
  */
 
-import type { ApiError, ChampionSummary, PhoneState, ServerMessage } from "@shared/phone-api";
+import type { ApiError, ChampionSummary, PhoneState, ServerMessage, SkinOption, SpellOption } from "@shared/phone-api";
 
 const TOKEN_KEY = "lolc.token";
 
@@ -91,6 +91,8 @@ export type ActionName =
   | "queue/cancel"
   | "champ-select/hover"
   | "champ-select/lock"
+  | "champ-select/spells"
+  | "champ-select/skin"
   | "champ-select/swap/accept"
   | "champ-select/swap/decline"
   | "champ-select/swap/request"
@@ -111,9 +113,21 @@ export async function fetchChampions(): Promise<ChampionSummary[]> {
   return (await res.json()) as ChampionSummary[];
 }
 
-// ---------- icons: fetched with the auth header, kept as blob: URLs ----------
+export async function fetchSpells(): Promise<SpellOption[]> {
+  const res = await authed("/api/spells");
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return (await res.json()) as SpellOption[];
+}
 
-const iconUrls = new Map<number, Promise<string | null>>();
+export async function fetchSkins(): Promise<SkinOption[]> {
+  const res = await authed("/api/skins");
+  if (!res.ok) throw new Error(await errorMessage(res));
+  return (await res.json()) as SkinOption[];
+}
+
+// ---------- images: fetched with the auth header, kept as blob: URLs ----------
+
+const iconUrls = new Map<string, Promise<string | null>>();
 const queue: (() => void)[] = [];
 let inFlight = 0;
 const MAX_PARALLEL = 6;
@@ -134,13 +148,21 @@ function runQueued<T>(job: () => Promise<T>): Promise<T> {
   });
 }
 
-export function iconUrl(id: number): Promise<string | null> {
+export type ImageKind = "champion" | "spell" | "skin";
+const IMAGE_PATHS: Record<ImageKind, (id: number) => string> = {
+  champion: (id) => `/api/champions/${id}/icon`,
+  spell: (id) => `/api/spells/${id}/image`,
+  skin: (id) => `/api/skins/${id}/image`,
+};
+
+export function iconUrl(id: number, kind: ImageKind = "champion"): Promise<string | null> {
   if (!(id > 0)) return Promise.resolve(null);
-  let p = iconUrls.get(id);
+  const key = `${kind}:${id}`;
+  let p = iconUrls.get(key);
   if (!p) {
     p = runQueued(async () => {
       try {
-        const res = await authed(`/api/champions/${id}/icon`);
+        const res = await authed(IMAGE_PATHS[kind](id));
         if (!res.ok) return null;
         return URL.createObjectURL(await res.blob());
       } catch {
@@ -148,9 +170,9 @@ export function iconUrl(id: number): Promise<string | null> {
       }
     });
     p.then((url) => {
-      if (!url) iconUrls.delete(id); // retry later (e.g. client was reconnecting)
+      if (!url) iconUrls.delete(key); // retry later (e.g. client was reconnecting)
     });
-    iconUrls.set(id, p);
+    iconUrls.set(key, p);
   }
   return p;
 }

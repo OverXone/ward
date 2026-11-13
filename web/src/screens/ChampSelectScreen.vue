@@ -4,6 +4,7 @@ import { computed, ref, watch } from "vue";
 import { myTurnAlert, swapRequestAlert } from "../alerts";
 import ChampGrid from "../components/ChampGrid.vue";
 import ChampIcon from "../components/ChampIcon.vue";
+import LoadoutBar from "../components/LoadoutBar.vue";
 import SwapRequests, { type SwapRequest } from "../components/SwapRequests.vue";
 import SwapSheet from "../components/SwapSheet.vue";
 import TeamColumn from "../components/TeamColumn.vue";
@@ -128,8 +129,8 @@ const subline = computed(() => {
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Tap a champion, then confirm the ban." : "Tap a champion, then lock in.";
   if (cs.canHoverIntent && cs.phase === "PLANNING") return "Bans start when the timer ends. This only shows your team your plan.";
   if (cs.canHoverIntent) return "Tap to show your team what you'll play.";
-  if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Pick runes, spells and skin on your PC." : "";
-  if (cs.hasLockedPick) return "You're locked in.";
+  if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Set your spells and skin below; runes on your PC." : "";
+  if (cs.hasLockedPick) return "You're locked in. Set your spells and skin below.";
   return "";
 });
 
@@ -163,6 +164,14 @@ const seconds = computed(() => champSelectSecondsLeft());
       <TeamColumn :players="cs.myTeam" side="ally" @select="(p) => (sheetCell = p.cellId)" />
       <TeamColumn :players="cs.theirTeam" side="enemy" />
     </section>
+
+    <LoadoutBar
+      v-if="me"
+      :spells="cs.mySpells"
+      :skin-id="cs.mySkinId"
+      :champion-id="me.championId"
+      :can-pick-skin="cs.hasLockedPick"
+    />
 
     <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />
 

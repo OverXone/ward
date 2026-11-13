@@ -28,6 +28,9 @@ export interface LcuMember {
   summonerId?: number;
   playerType?: string;
   team?: number;
+  spell1Id?: number;
+  spell2Id?: number;
+  selectedSkinId?: number;
   /** Other fields (puuid, ids, skins...) are deliberately not typed and never forwarded. */
 }
 
@@ -228,6 +231,8 @@ export function deriveChampSelect(
   const my = findMyActiveAction(session);
   const hoverTarget = findHoverTarget(session);
   const turns = pickTurns(session);
+  const me = (session.myTeam ?? []).find((m) => m.cellId === session.localPlayerCellId);
+  const pos = (v: unknown) => (Number.isInteger(v) && (v as number) > 0 ? (v as number) : 0);
   return {
     phase: session.timer?.phase ?? "UNKNOWN",
     timeLeftMs: timeLeftMs(session.timer, now),
@@ -240,5 +245,7 @@ export function deriveChampSelect(
     hasLockedPick: hasLockedPick(session),
     pickableChampionIds: (pickable ?? []).filter((n) => Number.isInteger(n) && n > 0),
     bannableChampionIds: (bannable ?? []).filter((n) => Number.isInteger(n) && n > 0),
+    mySpells: [pos(me?.spell1Id), pos(me?.spell2Id)],
+    mySkinId: pos(me?.selectedSkinId),
   };
 }

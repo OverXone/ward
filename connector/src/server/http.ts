@@ -6,6 +6,7 @@
 import http from "node:http";
 import { ActionError, isActionName, runAction } from "../actions";
 import type { Champions } from "../champions";
+import type { Loadout } from "../loadout";
 import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { Store } from "../state/store";
@@ -20,6 +21,7 @@ export interface ServerDeps {
   pairing: Pairing;
   limiter: FailureLimiter;
   champions: Champions;
+  loadout: Loadout;
   store: Store;
   getLcu: () => LcuHttp | null;
   staticFiles: StaticFiles;
@@ -141,6 +143,22 @@ export function createRequestHandler(deps: ServerDeps) {
         const list = await deps.champions.list();
         return list ? sendJson(res, 200, list) : sendError(res, 503, "League client not connected");
       }
+      if (path === "/api/spells") {
+        const list = await deps.loadout.availableSpells();
+        return list ? sendJson(res, 200, list) : sendError(res, 503, "League client not connected");
+      }
+      if (path === "/api/skins") {
+        const list = await deps.loadout.availableSkins();
+        return list ? sendJson(res, 200, list) : sendError(res, 503, "League client not connected");
+      }
+      const image = /^\/api\/(spell|skin)s\/(\d{1,9})\/image$/.exec(path);
+      if (image) {
+        const img = await deps.loadout.image(image[1] as "spell" | "skin", Number(image[2]));
+        if (!img) return sendError(res, 404, "no image");
+        res.writeHead(200, { "Content-Type": img.type, "Content-Length": img.body.length, "Cache-Control": "private, max-age=3600" });
+        res.end(img.body);
+        return;
+      }
       const icon = /^\/api\/champions\/(\d{1,7})\/icon$/.exec(path);
       if (icon) {
         const png = await deps.champions.icon(Number(icon[1]));
@@ -161,6 +179,7 @@ export function createRequestHandler(deps: ServerDeps) {
           http: deps.getLcu(),
           lists: () => deps.store.championLists(),
           knownChampions: () => deps.champions.list(),
+          loadout: deps.loadout,
         });
       } catch (e) {
         if (e instanceof ActionError) {

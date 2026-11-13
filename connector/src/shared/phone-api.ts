@@ -99,6 +99,23 @@ export interface ChampSelectView {
   hasLockedPick: boolean;
   pickableChampionIds: number[];
   bannableChampionIds: number[];
+  /** My summoner spells [D, F] (0 = none) and selected skin (0 = default / none yet). */
+  mySpells: [number, number];
+  mySkinId: number;
+}
+
+/** A summoner spell I can take into this game (GET /api/spells). */
+export interface SpellOption {
+  id: number;
+  name: string;
+}
+
+/** A skin I can use on my current champion, with its usable chromas (GET /api/skins). */
+export interface SkinOption {
+  id: number;
+  name: string;
+  isBase: boolean;
+  chromas: { id: number; name: string; color: string | null }[];
 }
 
 export interface PhoneState {

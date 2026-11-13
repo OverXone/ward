@@ -85,6 +85,39 @@ function png(color: [number, number, number], size = 32): Buffer {
 }
 const ICONS = new Map(CHAMPIONS.map((c) => [c.id, png(c.color)]));
 
+const SPELLS = [
+  { id: 4, name: "Flash", color: [240, 220, 80] },
+  { id: 14, name: "Ignite", color: [230, 90, 40] },
+  { id: 12, name: "Teleport", color: [150, 80, 220] },
+  { id: 7, name: "Heal", color: [80, 200, 120] },
+  { id: 21, name: "Barrier", color: [240, 200, 140] },
+  { id: 3, name: "Exhaust", color: [150, 120, 60] },
+  { id: 11, name: "Smite", color: [90, 150, 230] },
+  { id: 6, name: "Ghost", color: [120, 200, 230] },
+  { id: 1, name: "Cleanse", color: [100, 220, 220] },
+  { id: 32, name: "Mark", color: [200, 220, 240] }, // ARAM only: never offered in this mock's CLASSIC games
+  { id: 13, name: "Clarity", color: [60, 120, 240] }, // ARAM only
+] as const;
+const SPELL_ICONS = new Map<number, Buffer>(SPELLS.map((s) => [s.id, png([...s.color] as [number, number, number])]));
+const ARAM_ONLY = new Set([32, 13]);
+
+/** Skins for a champion: the base skin, two owned skins (one with chromas) and one not owned. */
+function skinsFor(champ: number) {
+  const tile = (id: number) => `/lol-game-data/assets/v1/champion-tiles/${champ}/${id}.jpg`;
+  const chroma = (id: number, name: string, color: string) => ({ id, championId: champ, name, unlocked: true, disabled: false, chromaPreviewPath: `/lol-game-data/assets/v1/champion-chroma-images/${champ}/${id}.png`, colors: [color, color] });
+  const b = champ * 1000;
+  return [
+    { id: b, championId: champ, name: CHAMPIONS.find((c) => c.id === champ)?.name ?? "Champion", isBase: true, unlocked: true, disabled: false, tilePath: tile(b), childSkins: [] },
+    { id: b + 1, championId: champ, name: "Arcade " + (CHAMPIONS.find((c) => c.id === champ)?.name ?? ""), isBase: false, unlocked: true, disabled: false, tilePath: tile(b + 1), childSkins: [chroma(b + 21, "Ruby", "#d33a3a"), chroma(b + 22, "Sapphire", "#3a6bd3"), { ...chroma(b + 23, "Obsidian", "#222222"), unlocked: false }] },
+    { id: b + 2, championId: champ, name: "Star Guardian " + (CHAMPIONS.find((c) => c.id === champ)?.name ?? ""), isBase: false, unlocked: true, disabled: false, tilePath: tile(b + 2), childSkins: [] },
+    { id: b + 3, championId: champ, name: "Prestige " + (CHAMPIONS.find((c) => c.id === champ)?.name ?? ""), isBase: false, unlocked: false, disabled: false, tilePath: tile(b + 3), childSkins: [] },
+  ];
+}
+function jpgLike(seed: number): Buffer {
+  // The phone only needs a valid image; a PNG served as image/png is fine for the mock.
+  return png([60 + ((seed * 53) % 180), 60 + ((seed * 97) % 180), 60 + ((seed * 31) % 180)], 48);
+}
+
 // ---------- state ----------
 
 interface Action {
@@ -228,6 +261,7 @@ function toChampSelect(): void {
     team: cell < 5 ? 1 : 2,
     spell1Id: 4,
     spell2Id: 14,
+    selectedSkinId: 0,
   });
   session = {
     actions,
@@ -376,7 +410,11 @@ function botAct(a: Action): void {
 function complete(a: Action): void {
   a.completed = true;
   a.isInProgress = false;
-  if (a.type === "pick") memberByCell(a.actorCellId).championId = a.championId;
+  if (a.type === "pick") {
+    const mem = memberByCell(a.actorCellId);
+    mem.championId = a.championId;
+    mem.selectedSkinId = a.championId * 1000;
+  }
   const group = (session.actions as Action[][]).find((g) => g.includes(a))!;
   if (group.every((x) => x.completed)) startNextTurn();
   else publishSession();
@@ -452,6 +490,52 @@ async function handle(req: any, res: any): Promise<void> {
     const buf = ICONS.get(Number(icon[1]));
     if (!buf) return lcuError(res, 404, "no icon");
     return void res.writeHead(200, { "Content-Type": "image/png" }).end(buf);
+  }
+  if (m === "GET" && p === "/lol-game-data/assets/v1/summoner-spells.json") {
+    const list = SPELLS.map((sp) => ({ id: sp.id, name: sp.name, description: "", summonerLevel: 1, gameModes: ARAM_ONLY.has(sp.id) ? ["ARAM"] : ["CLASSIC", "ARAM"], iconPath: `/lol-game-data/assets/DATA/Spells/Icons2D/Summoner${sp.name}.png` }));
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(list));
+  }
+  const spellIcon = /^\/lol-game-data\/assets\/DATA\/Spells\/Icons2D\/Summoner(\w+)\.png$/.exec(p);
+  if (m === "GET" && spellIcon) {
+    const sp = SPELLS.find((x) => x.name === spellIcon[1]);
+    if (!sp) return lcuError(res, 404, "no icon");
+    return void res.writeHead(200, { "Content-Type": "image/png" }).end(SPELL_ICONS.get(sp.id));
+  }
+  if (m === "GET" && p === "/lol-summoner/v1/current-summoner") {
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ summonerId: 1002, gameName: "You", puuid: "mock-puuid" }));
+  }
+  if (m === "GET" && p === "/lol-collections/v1/inventories/1002/spells") {
+    // Owns everything except Clarity.
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ summonerId: 1002, spells: SPELLS.map((x) => x.id).filter((id) => id !== 13) }));
+  }
+  if (m === "GET" && p === "/lol-gameflow/v1/session") {
+    if (!session) return lcuError(res, 404, "No session");
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ phase: state[URIS.phase], gameData: { queue: { id: 420, gameMode: "CLASSIC" }, password: "" } }));
+  }
+  if (m === "GET" && p === "/lol-champ-select/v1/skin-carousel-skins") {
+    const me = session && memberByCell(LOCAL_CELL);
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(me?.championId > 0 ? skinsFor(me.championId) : []));
+  }
+  const skinImg = /^\/lol-game-data\/assets\/v1\/(champion-tiles|champion-chroma-images)\/(\d+)\/(\d+)\.(jpg|png)$/.exec(p);
+  if (m === "GET" && skinImg) {
+    return void res.writeHead(200, { "Content-Type": "image/png" }).end(jpgLike(Number(skinImg[3])));
+  }
+  if (m === "PATCH" && p === "/lol-champ-select/v1/session/my-selection") {
+    if (!session) return lcuError(res, 404, "No champ select");
+    const me = memberByCell(LOCAL_CELL);
+    if (body?.spell1Id !== undefined || body?.spell2Id !== undefined) {
+      const ok = (id: unknown) => SPELLS.some((x) => x.id === id) && !ARAM_ONLY.has(id as number);
+      if (!ok(body.spell1Id ?? me.spell1Id) || !ok(body.spell2Id ?? me.spell2Id)) return lcuError(res, 400, "INVALID_SPELL");
+      me.spell1Id = body.spell1Id ?? me.spell1Id;
+      me.spell2Id = body.spell2Id ?? me.spell2Id;
+    }
+    if (body?.selectedSkinId !== undefined) {
+      const usable = me.championId > 0 && skinsFor(me.championId).flatMap((sk: any) => [sk, ...sk.childSkins]).some((sk: any) => sk.id === body.selectedSkinId && sk.unlocked);
+      if (!usable) return lcuError(res, 400, "INVALID_SKIN");
+      me.selectedSkinId = body.selectedSkinId;
+    }
+    publishSession();
+    return void res.writeHead(204).end();
   }
   if (m === "GET" && p === "/lol-game-queues/v1/queues/420") {
     return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ id: 420, name: "Ranked Solo/Duo", description: "Ranked Solo/Duo", shortName: "Ranked" }));

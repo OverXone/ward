@@ -5,6 +5,7 @@ Control your League of Legends client from your phone over your home Wi-Fi. From
 - start or cancel the queue
 - hover, ban and lock in champions
 - accept, decline or ask for role swaps, pick-order swaps and champion trades
+- choose your summoner spells, skin and chroma
 
 There's no cloud and no accounts. Everything stays on your local network.
 
@@ -24,6 +25,7 @@ Good to know:
 - **Add it to your home screen** (browser menu, "Add to Home Screen") so it opens like an app.
 - **Favorite champions:** long-press a champion in the grid to star it. When you're picking, starred champions come first.
 - **Swaps:** a teammate's swap request pops up with Accept and Decline. To ask someone, tap a teammate with the ⇄ badge.
+- **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own. Runes are still set on the PC.
 - **Don't show the window on stream or screen share.** The QR code is your phone's login key for that session.
 
 ### Phone can't open the page?
@@ -112,7 +114,7 @@ Keys in the mock window:
 
 - **New 32-byte token every launch.** The phone gets it through the QR code or a one-time pairing code, then sends it on every API call and in the first websocket frame. Comparisons are constant-time. After 10 failed attempts, that IP is locked out for 60 s.
 - **LAN only.** The connector listens on one private LAN IPv4 address, never `0.0.0.0`, and rejects any client whose IP isn't private (10/8, 172.16/12, 192.168/16). The `Host` and `Origin` checks block DNS rebinding.
-- **Not a proxy.** The phone can trigger only these actions: accept, decline, start queue, cancel queue, hover, lock, and accept/decline/request/cancel a swap. Inputs are validated against the client's current pickable or bannable lists. The connector decides which champ-select action or swap is yours; the phone never sends an action or swap id.
+- **Not a proxy.** The phone can trigger only these actions: accept, decline, start queue, cancel queue, hover, lock, set spells, set skin, and accept/decline/request/cancel a swap. Inputs are validated against the client's own current lists (pickable or bannable champions, spells for this mode that you own, skins you've unlocked). The connector decides which champ-select action or swap is yours; the phone never sends an action or swap id.
 - **TLS verification is skipped for 127.0.0.1 only.** It's turned off on one HTTPS agent that only talks to the local League client. It's never turned off globally.
 - **No secrets in the console.** The token and the League client password are never printed. The token only appears encoded inside the QR code.
 - **Plain HTTP on your LAN.** That's fine on your own home Wi-Fi. Don't use it on public or shared Wi-Fi.
