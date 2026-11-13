@@ -2,7 +2,7 @@
   "name": "@ward/connector",
   "private": true,
   "version": "0.1.0",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "scripts": {
     "dev": "tsx src/main.ts",
     "events": "tsx src/main.ts --events",

@@ -1,5 +1,9 @@
 Ward
-Copyright (c) 2026 the Ward authors. MIT License.
+Copyright (c) 2026 OverXone. Licensed under the PolyForm Noncommercial
+License 1.0.0 (see LICENSE.md): free to use, change and share, but not to
+make money with.
+
+The code adapted from Mimic (below) stays under Mimic's MIT License.
 
 This project adapts logic (champion-select turn handling, pick-intent hovering,
 selectable-champion filtering, ready-check alert behaviour) from Mimic:
@@ -27,5 +31,7 @@ selectable-champion filtering, ready-check alert behaviour) from Mimic:
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
 
-League of Legends is a trademark of Riot Games, Inc. This project is not
-endorsed by or affiliated with Riot Games.
+Ward isn't endorsed by Riot Games and doesn't reflect the views or opinions
+of Riot Games or anyone officially involved in producing or managing Riot
+Games properties. Riot Games, and all associated properties are trademarks or
+registered trademarks of Riot Games, Inc.

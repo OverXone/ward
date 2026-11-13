@@ -1,6 +1,6 @@
 # Ward
 
-Control your League of Legends client from your phone over your home Wi-Fi. From the phone you can:
+Control your League of Legends client from your phone over your home Wi-Fi. Step away from your desk without missing the queue pop. From the phone you can:
 - accept or decline ready checks
 - start or cancel the queue
 - hover, ban and lock in champions
@@ -10,9 +10,11 @@ Control your League of Legends client from your phone over your home Wi-Fi. From
 
 There's no cloud and no accounts. Everything stays on your local network.
 
+**[Download the latest Ward.exe](https://github.com/OverXone/ward/releases/latest)** (Windows)
+
 ## Install and use (Windows)
 
-1. **Get `Ward.exe`** and put it anywhere, for example on your desktop. It's a single file (about 90 MB) with nothing to install.
+1. **Download `Ward.exe`** from the [Releases page](https://github.com/OverXone/ward/releases/latest) and put it anywhere, for example on your desktop. It's a single file (about 90 MB) with nothing to install.
 2. **Double-click it.** Windows may warn you first:
    - **"Windows protected your PC" (SmartScreen):** click **More info**, then **Run anyway**. It appears because the exe isn't code-signed.
    - **Windows Firewall:** the app shows up as **"Node.js JavaScript Runtime"**. Tick **Private networks** only and **untick Public networks**, then click **Allow**. Your phone can't connect without this.
@@ -27,7 +29,7 @@ Good to know:
 - **Favorite champions:** long-press a champion in the grid to star it. When you're picking, starred champions come first.
 - **Swaps:** a teammate's swap request pops up with Accept and Decline. To ask someone, tap a teammate with the ⇄ badge.
 - **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own.
-- **Runes** aren't on the phone (Mobalytics or the PC client handle them). The last version that had a rune page picker is tagged `with-runes` in git.
+- **Runes** aren't on the phone; set them in the PC client or with a tool like Mobalytics. (The last version with a rune page picker is tagged `with-runes` in git.)
 - **Invitations:** when someone invites you, a card with **Join** and **Decline** appears on every screen. In your lobby, **Invite friends** lists friends who are online in League.
 - **Don't show the window on stream or screen share.** The QR code is your phone's login key for that session.
 
@@ -125,4 +127,16 @@ Keys in the mock window:
 - **No secrets in the console.** The token and the League client password are never printed. The token only appears encoded inside the QR code.
 - **Plain HTTP on your LAN.** That's fine on your own home Wi-Fi. Don't use it on public or shared Wi-Fi.
 
-This uses the League client's unofficial local API, the same way Mimic, Blitz and Porofessor do. It's not endorsed by Riot.
+This uses the League client's unofficial local API, the same way Mimic, Blitz and Porofessor do.
+
+## License
+
+Ward is free for any **noncommercial** use: play with it, change it, share it, fork it. You can't sell it or use it to make money. The exact terms are the [PolyForm Noncommercial License 1.0.0](LICENSE.md). If you'd like to use it commercially, open an issue and ask.
+
+## Credits
+
+Ward's champion select logic is adapted from [Mimic](https://github.com/molenzwiebel/Mimic) by Thijs Molendijk (MIT License). See [NOTICE](NOTICE).
+
+## Legal
+
+Ward isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties. Riot Games, and all associated properties are trademarks or registered trademarks of Riot Games, Inc.

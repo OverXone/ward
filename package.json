@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "description": "Control the League of Legends client from your phone over your local Wi-Fi.",
-  "license": "MIT",
+  "license": "PolyForm-Noncommercial-1.0.0",
   "workspaces": [
     "connector",
     "web"
