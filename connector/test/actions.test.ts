@@ -229,6 +229,65 @@ describe("champ select", () => {
   });
 });
 
+describe("swaps", () => {
+  const session = () => {
+    const s = draftSession();
+    s.positionSwaps = [
+      { cellId: 1, id: 13, state: "RECEIVED" },
+      { cellId: 3, id: 14, state: "AVAILABLE" },
+    ];
+    s.pickOrderSwaps = [{ cellId: 3, id: 14, state: "SENT" }];
+    s.trades = [{ cellId: 0, id: 12, state: "AVAILABLE" }];
+    return s;
+  };
+  const swapLcu = (extra: Record<string, Route> = {}) => fakeLcu({ "GET /lol-champ-select/v1/session": ok(session()), ...extra });
+
+  it("accepts a received role swap using the id from the client's session", async () => {
+    const lcu = swapLcu({ "POST /lol-champ-select/v1/session/position-swaps/13/accept": ok({}) });
+    await run("champ-select/swap/accept", { kind: "position", cellId: 1 }, lcu.http);
+    expect(lcu.writes()).toEqual([{ method: "POST", path: "/lol-champ-select/v1/session/position-swaps/13/accept", body: undefined }]);
+  });
+
+  it("requests, declines and cancels only in the matching state", async () => {
+    const lcu = swapLcu({
+      "POST /lol-champ-select/v1/session/position-swaps/14/request": ok({}),
+      "POST /lol-champ-select/v1/session/pick-order-swaps/14/cancel": ok({}),
+      "POST /lol-champ-select/v1/session/position-swaps/13/decline": ok({}),
+    });
+    await run("champ-select/swap/request", { kind: "position", cellId: 3 }, lcu.http);
+    await run("champ-select/swap/cancel", { kind: "pickOrder", cellId: 3 }, lcu.http);
+    await run("champ-select/swap/decline", { kind: "position", cellId: 1 }, lcu.http);
+    expect(lcu.writes().map((w) => w.path)).toEqual([
+      "/lol-champ-select/v1/session/position-swaps/14/request",
+      "/lol-champ-select/v1/session/pick-order-swaps/14/cancel",
+      "/lol-champ-select/v1/session/position-swaps/13/decline",
+    ]);
+    // Wrong state: accepting something nobody asked for, requesting one already sent, a teammate with no slot.
+    await expectError(run("champ-select/swap/accept", { kind: "position", cellId: 3 }, lcu.http), 409);
+    await expectError(run("champ-select/swap/request", { kind: "pickOrder", cellId: 3 }, lcu.http), 409);
+    await expectError(run("champ-select/swap/request", { kind: "position", cellId: 7 }, lcu.http), 409);
+    expect(lcu.writes()).toHaveLength(3);
+  });
+
+  it("falls back to the older /trades path for champion trades", async () => {
+    const lcu = swapLcu({ "POST /lol-champ-select/v1/session/trades/12/request": ok({}) });
+    await run("champ-select/swap/request", { kind: "champion", cellId: 0 }, lcu.http);
+    expect(lcu.writes().map((w) => w.path)).toEqual([
+      "/lol-champ-select/v1/session/champion-swaps/12/request",
+      "/lol-champ-select/v1/session/trades/12/request",
+    ]);
+  });
+
+  it("rejects bad input before talking to the client", async () => {
+    const lcu = swapLcu();
+    await expectError(run("champ-select/swap/accept", { kind: "skin", cellId: 1 }, lcu.http), 400, /kind/);
+    await expectError(run("champ-select/swap/accept", { kind: "position", cellId: -1 }, lcu.http), 400, /cellId/);
+    await expectError(run("champ-select/swap/accept", { kind: "position", cellId: "1" }, lcu.http), 400, /cellId/);
+    await expectError(run("champ-select/swap/accept", { kind: "position", cellId: 1, id: 13 }, lcu.http), 400, /unexpected/);
+    expect(lcu.calls).toHaveLength(0);
+  });
+});
+
 describe("friendlyLcuError", () => {
   it("explains the teammate-hover ban refusal and drops the endpoint path", () => {
     const msg = friendlyLcuError(

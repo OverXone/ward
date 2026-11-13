@@ -9,7 +9,8 @@
  */
 
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
-import { findHoverTarget, findMyActiveAction, type LcuAction, type LcuSession } from "./state/champ-select";
+import { SWAP_KINDS, type SwapKind } from "./shared/phone-api";
+import { findHoverTarget, findMyActiveAction, findSwap, type LcuAction, type LcuSession } from "./state/champ-select";
 import { log } from "./log";
 import { championIds, URI } from "./state/store";
 
@@ -152,6 +153,58 @@ const actionPath = (id: number) => {
   return `/lol-champ-select/v1/session/actions/${id}`;
 };
 
+// ---------- swaps ----------
+
+function swapInput(input: Input): { kind: SwapKind; cellId: number } {
+  const { kind, cellId } = input;
+  if (typeof kind !== "string" || !SWAP_KINDS.includes(kind as SwapKind)) {
+    throw new ActionError(400, `kind must be one of ${SWAP_KINDS.join(", ")}`);
+  }
+  if (typeof cellId !== "number" || !Number.isInteger(cellId) || cellId < 0 || cellId > 99) {
+    throw new ActionError(400, "cellId must be a small non-negative integer");
+  }
+  return { kind: kind as SwapKind, cellId };
+}
+
+/**
+ * Endpoint bases from the client's own API list (2026-11-12). Champion trades are "champion-swaps"
+ * on current clients (the session still calls them trades); older clients used /session/trades.
+ */
+const SWAP_PATHS: Record<SwapKind, readonly string[]> = {
+  position: ["/lol-champ-select/v1/session/position-swaps"],
+  pickOrder: ["/lol-champ-select/v1/session/pick-order-swaps"],
+  champion: ["/lol-champ-select/v1/session/champion-swaps", "/lol-champ-select/v1/session/trades"],
+};
+
+type SwapVerb = "accept" | "decline" | "request" | "cancel";
+/** The state the swap must be in for each verb, and what to say when it isn't. */
+const SWAP_NEEDS: Record<SwapVerb, { state: string; error: string }> = {
+  accept: { state: "RECEIVED", error: "That swap request isn't open anymore" },
+  decline: { state: "RECEIVED", error: "That swap request isn't open anymore" },
+  request: { state: "AVAILABLE", error: "That swap isn't available right now" },
+  cancel: { state: "SENT", error: "There's no swap request to cancel" },
+};
+
+function swapAction(verb: SwapVerb): ActionDef {
+  return {
+    keys: ["kind", "cellId"],
+    validate: (input) => void swapInput(input),
+    async run(input, http) {
+      const { kind, cellId } = swapInput(input);
+      const session = await getSession(http);
+      // The phone names a teammate; the swap id always comes from the client's own session.
+      const swap = findSwap(session, kind, cellId);
+      const need = SWAP_NEEDS[verb];
+      if (!swap || swap.state !== need.state) throw new ActionError(409, need.error);
+      if (!Number.isInteger(swap.id) || swap.id < 0) throw new ActionError(500, "invalid swap id from client");
+      for (const base of SWAP_PATHS[kind]) {
+        if ((await call(http, "POST", `${base}/${swap.id}/${verb}`)) !== 404) return;
+      }
+      throw new ActionError(502, "This League client doesn't support that swap from here. Use your PC.");
+    },
+  };
+}
+
 // ---------- the whitelist ----------
 
 const ACTIONS = {
@@ -224,6 +277,10 @@ const ACTIONS = {
       throw new ActionError(502, "League didn't accept the lock-in. Lock in on your PC.");
     },
   },
+  "champ-select/swap/accept": swapAction("accept"),
+  "champ-select/swap/decline": swapAction("decline"),
+  "champ-select/swap/request": swapAction("request"),
+  "champ-select/swap/cancel": swapAction("cancel"),
 } satisfies Record<string, ActionDef>;
 
 export type ActionName = keyof typeof ACTIONS;

@@ -53,6 +53,12 @@ export interface ReadyCheckView {
 
 export type ActionType = "pick" | "ban";
 
+/** The three kinds of swap League offers between teammates in champ select. */
+export type SwapKind = "position" | "pickOrder" | "champion";
+/** available = I can offer it; sent = I asked, waiting; received = they asked me. */
+export type SwapState = "available" | "sent" | "received";
+export const SWAP_KINDS: readonly SwapKind[] = ["position", "pickOrder", "champion"];
+
 export interface ChampSelectPlayer {
   cellId: number;
   /** Display label; teammates' Riot ID game name when the client exposes it, otherwise "Player N". */
@@ -64,6 +70,10 @@ export interface ChampSelectPlayer {
   /** This player currently has an in-progress action. */
   activeAction: ActionType | null;
   isBot: boolean;
+  /** 1-based order of this player's pick within their team (0 = unknown). */
+  pickTurn: number;
+  /** Swaps between me and this teammate (empty for me and for enemies). */
+  swaps: Partial<Record<SwapKind, SwapState>>;
 }
 
 export interface MyTurn {

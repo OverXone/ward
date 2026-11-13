@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import type { ChampSelectView } from "@shared/phone-api";
+import { SWAP_KINDS, type ChampSelectView } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
-import { myTurnAlert } from "../alerts";
+import { myTurnAlert, swapRequestAlert } from "../alerts";
 import ChampGrid from "../components/ChampGrid.vue";
 import ChampIcon from "../components/ChampIcon.vue";
+import SwapRequests, { type SwapRequest } from "../components/SwapRequests.vue";
+import SwapSheet from "../components/SwapSheet.vue";
 import TeamColumn from "../components/TeamColumn.vue";
 import { app, champSelectSecondsLeft, championName, run } from "../store";
 
@@ -61,6 +63,26 @@ const reasons = computed(() =>
   mode.value === "ban" ? new Map([...teammateWants.value].map((id) => [id, "Teammate's pick"])) : undefined,
 );
 const banBlocked = computed(() => props.cs.myTurn?.type === "ban" && teammateWants.value.has(serverSelected.value));
+
+// Swap requests (role, pick order, champion trade) in both directions.
+const swapRequests = computed<SwapRequest[]>(() =>
+  props.cs.myTeam.flatMap((player) =>
+    SWAP_KINDS.flatMap((kind) => {
+      const state = player.swaps[kind];
+      return state === "sent" || state === "received" ? [{ player, kind, state }] : [];
+    }),
+  ),
+);
+const receivedKeys = computed(() =>
+  swapRequests.value.filter((r) => r.state === "received").map((r) => `${r.kind}:${r.player.cellId}`),
+);
+watch(receivedKeys, (now, before) => {
+  if (now.some((k) => !before?.includes(k))) swapRequestAlert();
+});
+
+// Tapping a teammate opens the offers you can send them. Follow the live player data while open.
+const sheetCell = ref<number | null>(null);
+const sheetPlayer = computed(() => props.cs.myTeam.find((p) => p.cellId === sheetCell.value && !p.isMe) ?? null);
 
 const busy = ref(false);
 
@@ -135,10 +157,14 @@ const seconds = computed(() => champSelectSecondsLeft());
       </div>
     </div>
 
+    <SwapRequests v-if="swapRequests.length" :requests="swapRequests" :me="me" />
+
     <section class="teams">
-      <TeamColumn :players="cs.myTeam" side="ally" />
+      <TeamColumn :players="cs.myTeam" side="ally" @select="(p) => (sheetCell = p.cellId)" />
       <TeamColumn :players="cs.theirTeam" side="enemy" />
     </section>
+
+    <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />
 
     <ChampGrid
       v-if="canChoose"

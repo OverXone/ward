@@ -10,6 +10,7 @@
  * simplified; the real client is the source of truth.
  *
  * Keys: l=lobby  q=queue  r=ready check  c=champ select  n=finish current turn  g=in game  0=none  h=help
+ *       s / o / t = a teammate asks you to swap roles / pick order / champions
  */
 
 import { randomBytes } from "node:crypto";
@@ -239,6 +240,10 @@ function toChampSelect(): void {
     hasSimultaneousBans: true,
     hasSimultaneousPicks: false,
   };
+  // One swap slot per teammate, like the real client (ids shared across the three lists).
+  for (const field of Object.values(SWAP_FIELDS)) {
+    session[field] = [0, 1, 3, 4].map((cell) => ({ cellId: cell, id: 100 + cell, state: field === "trades" ? "INVALID" : "AVAILABLE" }));
+  }
   phaseEndsAt = Date.now() + 10000;
   set(URIS.phase, "ChampSelect");
   publishSession();
@@ -260,8 +265,58 @@ function takenIds(): Set<number> {
   return s;
 }
 
+// ---------- swaps ----------
+
+const SWAP_FIELDS: Record<string, string> = { "position-swaps": "positionSwaps", "pick-order-swaps": "pickOrderSwaps", "champion-swaps": "trades" };
+
+function swapSlot(field: string, cell: number): { cellId: number; id: number; state: string } | undefined {
+  return (session?.[field] as { cellId: number; id: number; state: string }[] | undefined)?.find((s) => s.cellId === cell);
+}
+
+/** Champion trades only open once both players have locked a pick. */
+function refreshTrades(): void {
+  const lockedPick = (cell: number) => allActions().some((a) => a.actorCellId === cell && a.type === "pick" && a.completed);
+  for (const slot of session?.trades ?? []) {
+    if (slot.state === "SENT" || slot.state === "RECEIVED") continue;
+    slot.state = lockedPick(LOCAL_CELL) && lockedPick(slot.cellId) ? "AVAILABLE" : "INVALID";
+  }
+}
+
+/** Carries out an accepted swap between me and `cell`. */
+function doSwap(field: string, cell: number): void {
+  const me = memberByCell(LOCAL_CELL);
+  const them = memberByCell(cell);
+  if (field === "positionSwaps") [me.assignedPosition, them.assignedPosition] = [them.assignedPosition, me.assignedPosition];
+  if (field === "pickOrderSwaps") {
+    for (const a of allActions()) {
+      if (a.type !== "pick" || a.completed) continue;
+      if (a.actorCellId === LOCAL_CELL) a.actorCellId = cell;
+      else if (a.actorCellId === cell) a.actorCellId = LOCAL_CELL;
+    }
+  }
+  if (field === "trades") {
+    [me.championId, them.championId] = [them.championId, me.championId];
+    for (const a of allActions()) {
+      if (a.type === "pick" && a.actorCellId === LOCAL_CELL) a.championId = me.championId;
+      if (a.type === "pick" && a.actorCellId === cell) a.championId = them.championId;
+    }
+  }
+}
+
+/** A teammate asks me for a swap (keys s / o / t). */
+function incomingSwap(field: string, cell: number): void {
+  const slot = session && swapSlot(field, cell);
+  if (!slot) return void say("no champ select / no such teammate");
+  if (field === "trades") refreshTrades();
+  if (slot.state !== "AVAILABLE") return void say(`${field} with cell ${cell} is ${slot.state}, can't request`);
+  slot.state = "RECEIVED";
+  say(`cell ${cell} requests a ${field} swap with you`);
+  publishSession();
+}
+
 function publishSession(): void {
   if (!session) return;
+  refreshTrades();
   const taken = takenIds();
   const banned = new Set(allActions().filter((a) => a.type === "ban" && a.completed).map((a) => a.championId));
   set(URIS.pickable, ALL_IDS.filter((x) => !taken.has(x)));
@@ -411,6 +466,32 @@ async function handle(req: any, res: any): Promise<void> {
     else later(500, toLobby);
     return void res.writeHead(204).end();
   }
+  const swap = /^\/lol-champ-select\/v1\/session\/(position-swaps|pick-order-swaps|champion-swaps)\/(\d+)\/(accept|decline|request|cancel)$/.exec(p);
+  if (swap && m === "POST" && session) {
+    const field = SWAP_FIELDS[swap[1]!]!;
+    const slot = (session[field] as { cellId: number; id: number; state: string }[]).find((s) => s.id === Number(swap[2]));
+    if (!slot) return lcuError(res, 404, "No such swap");
+    const verb = swap[3];
+    const need = verb === "request" ? "AVAILABLE" : verb === "cancel" ? "SENT" : "RECEIVED";
+    if (slot.state !== need) return lcuError(res, 400, `SWAP_NOT_${need}`);
+    if (verb === "accept") {
+      doSwap(field, slot.cellId);
+      slot.state = field === "trades" ? "INVALID" : "AVAILABLE";
+    } else if (verb === "request") {
+      slot.state = "SENT";
+      // The teammate answers after 3 s: role swaps get accepted, everything else declined.
+      setTimeout(() => {
+        if (slot.state !== "SENT" || !session) return;
+        if (field === "positionSwaps") doSwap(field, slot.cellId);
+        slot.state = field === "trades" ? "INVALID" : "AVAILABLE";
+        say(`cell ${slot.cellId} ${field === "positionSwaps" ? "accepted" : "declined"} your ${field} request`);
+        publishSession();
+      }, 3000);
+    } else slot.state = "AVAILABLE";
+    publishSession();
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(slot));
+  }
+
   const act = /^\/lol-champ-select\/v1\/session\/actions\/(\d+)(\/complete)?$/.exec(p);
   if (act && session) {
     const a = allActions().find((x) => x.id === Number(act[1]));
@@ -471,7 +552,8 @@ void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType
     toLobby();
     console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
     console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
-    console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit\n");
+    console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit");
+    console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions\n");
   });
 });
 
@@ -499,12 +581,20 @@ if (process.stdin.isTTY) {
     else if (k === "c") toChampSelect();
     else if (k === "n") finishCurrentTurn();
     else if (k === "g") toGame();
+    else if (k === "s") incomingSwap("positionSwaps", 1);
+    else if (k === "o") incomingSwap("pickOrderSwaps", 4);
+    else if (k === "t") incomingSwap("trades", 0);
     else if (k === "0") toNone();
   });
 } else {
   // Non-interactive: accept commands line by line on stdin (used by automated smoke tests).
   readline.createInterface({ input: process.stdin }).on("line", (line) => {
     const k = line.trim();
-    ({ l: toLobby, q: toQueue, r: toReadyCheck, c: toChampSelect, n: finishCurrentTurn, g: toGame, "0": toNone, x: cleanup } as Record<string, () => void>)[k]?.();
+    const swaps: Record<string, () => void> = {
+      s: () => incomingSwap("positionSwaps", 1),
+      o: () => incomingSwap("pickOrderSwaps", 4),
+      t: () => incomingSwap("trades", 0),
+    };
+    ({ l: toLobby, q: toQueue, r: toReadyCheck, c: toChampSelect, n: finishCurrentTurn, g: toGame, "0": toNone, x: cleanup, ...swaps } as Record<string, () => void>)[k]?.();
   });
 }

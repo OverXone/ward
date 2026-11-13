@@ -5,7 +5,7 @@
  * Copyright (c) 2017 Thijs Molendijk, MIT License. See NOTICE.
  */
 
-import type { ActionType, ChampSelectPlayer, ChampSelectView } from "../shared/phone-api";
+import type { ActionType, ChampSelectPlayer, ChampSelectView, SwapKind, SwapState } from "../shared/phone-api";
 
 /** The subset of /lol-champ-select/v1/session we rely on. */
 export interface LcuAction {
@@ -39,6 +39,55 @@ export interface LcuSession {
   bans?: { myTeamBans?: number[]; theirTeamBans?: number[] };
   timer?: { phase?: string; adjustedTimeLeftInPhase?: number; internalNowInEpochMs?: number; isInfinite?: boolean };
   isSpectating?: boolean;
+  /** One entry per teammate (not me). Seen on a live client, 2026-11-12. */
+  trades?: LcuSwap[];
+  pickOrderSwaps?: LcuSwap[];
+  positionSwaps?: LcuSwap[];
+}
+
+/** A swap slot between me and one teammate. state: AVAILABLE, SENT, RECEIVED, BUSY, INVALID, ... */
+export interface LcuSwap {
+  id: number;
+  cellId: number;
+  state: string;
+}
+
+/** Where each swap kind lives in the session (champion trades are still called "trades" there). */
+export const SWAP_FIELDS = {
+  position: "positionSwaps",
+  pickOrder: "pickOrderSwaps",
+  champion: "trades",
+} as const satisfies Record<SwapKind, keyof LcuSession>;
+
+const SWAP_STATES: Record<string, SwapState> = { AVAILABLE: "available", SENT: "sent", RECEIVED: "received" };
+
+/** The swap slot of this kind with this teammate, if the client lists one. */
+export function findSwap(session: LcuSession, kind: SwapKind, cellId: number): LcuSwap | null {
+  const list = session[SWAP_FIELDS[kind]];
+  if (!Array.isArray(list)) return null;
+  return list.find((s) => s && s.cellId === cellId && Number.isInteger(s.id)) ?? null;
+}
+
+function swapsWith(session: LcuSession, cellId: number): ChampSelectPlayer["swaps"] {
+  const out: ChampSelectPlayer["swaps"] = {};
+  for (const kind of Object.keys(SWAP_FIELDS) as SwapKind[]) {
+    const state = SWAP_STATES[findSwap(session, kind, cellId)?.state ?? ""];
+    if (state) out[kind] = state;
+  }
+  return out;
+}
+
+/** cellId -> 1-based pick order within that player's team. */
+function pickTurns(session: LcuSession): Map<number, number> {
+  const allies = new Set((session.myTeam ?? []).map((m) => m.cellId));
+  const turns = new Map<number, number>();
+  let ally = 0;
+  let enemy = 0;
+  for (const a of flatActions(session)) {
+    if (a.type !== "pick" || turns.has(a.actorCellId)) continue;
+    turns.set(a.actorCellId, allies.has(a.actorCellId) ? ++ally : ++enemy);
+  }
+  return turns;
 }
 
 const isActionType = (t: string): t is ActionType => t === "pick" || t === "ban";
@@ -130,7 +179,14 @@ function bans(session: LcuSession): { myTeam: number[]; theirTeam: number[] } {
   };
 }
 
-function toPlayer(m: LcuMember, index: number, friendly: boolean, session: LcuSession, active: LcuAction[]): ChampSelectPlayer {
+function toPlayer(
+  m: LcuMember,
+  index: number,
+  friendly: boolean,
+  session: LcuSession,
+  active: LcuAction[],
+  turns: Map<number, number>,
+): ChampSelectPlayer {
   const action = active.find((a) => a.actorCellId === m.cellId && isActionType(a.type));
   const isMe = friendly && m.cellId === session.localPlayerCellId;
   const gameName = typeof m.gameName === "string" ? m.gameName.trim() : "";
@@ -144,6 +200,8 @@ function toPlayer(m: LcuMember, index: number, friendly: boolean, session: LcuSe
     isMe,
     activeAction: action ? (action.type as ActionType) : null,
     isBot,
+    pickTurn: turns.get(m.cellId) ?? 0,
+    swaps: friendly && !isMe && !session.isSpectating ? swapsWith(session, m.cellId) : {},
   };
 }
 
@@ -169,12 +227,13 @@ export function deriveChampSelect(
   const active = inProgressActions(session);
   const my = findMyActiveAction(session);
   const hoverTarget = findHoverTarget(session);
+  const turns = pickTurns(session);
   return {
     phase: session.timer?.phase ?? "UNKNOWN",
     timeLeftMs: timeLeftMs(session.timer, now),
     isInfinite: !!session.timer?.isInfinite,
-    myTeam: (session.myTeam ?? []).map((m, i) => toPlayer(m, i, true, session, active)),
-    theirTeam: (session.theirTeam ?? []).map((m, i) => toPlayer(m, i, false, session, active)),
+    myTeam: (session.myTeam ?? []).map((m, i) => toPlayer(m, i, true, session, active, turns)),
+    theirTeam: (session.theirTeam ?? []).map((m, i) => toPlayer(m, i, false, session, active, turns)),
     bans: bans(session),
     myTurn: my ? { type: my.type as ActionType, championId: my.championId > 0 ? my.championId : 0 } : null,
     canHoverIntent: !my && !!hoverTarget,

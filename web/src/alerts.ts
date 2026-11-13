@@ -68,6 +68,11 @@ export function myTurnAlert(): void {
   chime([880, 1175]);
 }
 
+export function swapRequestAlert(): void {
+  vibrate([150, 80, 150, 80, 150]);
+  chime([988, 784, 988]);
+}
+
 export function stopVibration(): void {
   vibrate([0]);
 }

@@ -108,3 +108,42 @@ describe("deriveChampSelect", () => {
     expect(v.bannableChampionIds).toEqual([]);
   });
 });
+
+describe("swaps", () => {
+  // Shape recorded on a live client (2026-11-12): one slot per teammate, same ids in all three lists.
+  const withSwaps = () => {
+    const s = draftSession();
+    s.positionSwaps = [
+      { cellId: 0, id: 12, state: "INVALID" },
+      { cellId: 1, id: 13, state: "RECEIVED" },
+      { cellId: 3, id: 14, state: "AVAILABLE" },
+      { cellId: 4, id: 15, state: "BUSY" },
+    ];
+    s.pickOrderSwaps = [{ cellId: 3, id: 14, state: "SENT" }];
+    s.trades = [{ cellId: 3, id: 14, state: "INVALID" }];
+    return s;
+  };
+
+  it("shows each teammate's open swaps, and none for me or enemies", () => {
+    const v = deriveChampSelect(withSwaps(), [], []);
+    const byCell = new Map(v.myTeam.map((p) => [p.cellId, p.swaps]));
+    expect(byCell.get(0)).toEqual({});
+    expect(byCell.get(1)).toEqual({ position: "received" });
+    expect(byCell.get(3)).toEqual({ position: "available", pickOrder: "sent" });
+    expect(byCell.get(4)).toEqual({}); // BUSY: nothing to do
+    expect(byCell.get(2)).toEqual({}); // me
+    expect(v.theirTeam.every((p) => Object.keys(p.swaps).length === 0)).toBe(true);
+  });
+
+  it("numbers picks within each team", () => {
+    const v = deriveChampSelect(draftSession(), [], []);
+    expect(v.myTeam.map((p) => p.pickTurn)).toEqual([1, 2, 3, 4, 5]);
+    expect(v.theirTeam.map((p) => p.pickTurn)).toEqual([1, 2, 3, 4, 5]);
+  });
+
+  it("shows nothing while spectating", () => {
+    const s = withSwaps();
+    s.isSpectating = true;
+    expect(deriveChampSelect(s, [], []).myTeam.every((p) => Object.keys(p.swaps).length === 0)).toBe(true);
+  });
+});

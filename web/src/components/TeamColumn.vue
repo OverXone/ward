@@ -1,34 +1,35 @@
 <script setup lang="ts">
 import type { ChampSelectPlayer } from "@shared/phone-api";
+import { POSITION_NAMES } from "../swaps";
 import ChampIcon from "./ChampIcon.vue";
 
 defineProps<{ players: ChampSelectPlayer[]; side: "ally" | "enemy" }>();
+const emit = defineEmits<{ select: [player: ChampSelectPlayer] }>();
 
-const POSITIONS: Record<string, string> = {
-  top: "Top",
-  jungle: "Jungle",
-  middle: "Mid",
-  bottom: "Bot",
-  utility: "Support",
-};
+/** A teammate I can offer a swap to: tapping them opens the swap sheet. */
+const canOffer = (p: ChampSelectPlayer) => Object.values(p.swaps).includes("available");
 </script>
 
 <template>
   <ul class="team" :class="side">
-    <li
-      v-for="p in players"
-      :key="p.cellId"
-      class="player"
-      :class="{ me: p.isMe, active: !!p.activeAction, banning: p.activeAction === 'ban' }"
-    >
-      <ChampIcon :id="p.championId || p.pickIntentId" :size="40" :faded="!p.championId && !!p.pickIntentId" />
-      <div class="info">
-        <span class="name">{{ p.name }}</span>
-        <span class="meta">
-          <template v-if="p.activeAction">{{ p.activeAction === "ban" ? "Banning…" : "Picking…" }}</template>
-          <template v-else>{{ POSITIONS[p.position] ?? "" }}</template>
-        </span>
-      </div>
+    <li v-for="p in players" :key="p.cellId">
+      <component
+        :is="canOffer(p) ? 'button' : 'div'"
+        class="player"
+        :class="{ me: p.isMe, active: !!p.activeAction, banning: p.activeAction === 'ban', swappable: canOffer(p) }"
+        :aria-label="canOffer(p) ? `Swap with ${p.name}` : undefined"
+        @click="canOffer(p) && emit('select', p)"
+      >
+        <ChampIcon :id="p.championId || p.pickIntentId" :size="40" :faded="!p.championId && !!p.pickIntentId" />
+        <div class="info">
+          <span class="name">{{ p.name }}</span>
+          <span class="meta">
+            <template v-if="p.activeAction">{{ p.activeAction === "ban" ? "Banning…" : "Picking…" }}</template>
+            <template v-else>{{ POSITION_NAMES[p.position] ?? "" }}</template>
+          </span>
+        </div>
+        <span v-if="canOffer(p)" class="swap-badge" aria-hidden="true">⇄</span>
+      </component>
     </li>
   </ul>
 </template>
@@ -44,6 +45,7 @@ const POSITIONS: Record<string, string> = {
   min-width: 0;
 }
 .player {
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -51,12 +53,20 @@ const POSITIONS: Record<string, string> = {
   border-radius: 12px;
   border: 1px solid transparent;
   min-width: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+button.player {
+  cursor: pointer;
 }
 .enemy .player {
   flex-direction: row-reverse;
   text-align: right;
 }
 .info {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -71,6 +81,17 @@ const POSITIONS: Record<string, string> = {
 .meta {
   font-size: 12px;
   color: var(--muted);
+}
+.swap-badge {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 14px;
+  color: var(--ally);
+  background: rgba(76, 141, 255, 0.14);
 }
 .me {
   border-color: var(--gold);

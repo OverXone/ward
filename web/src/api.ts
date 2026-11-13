@@ -90,7 +90,11 @@ export type ActionName =
   | "queue/start"
   | "queue/cancel"
   | "champ-select/hover"
-  | "champ-select/lock";
+  | "champ-select/lock"
+  | "champ-select/swap/accept"
+  | "champ-select/swap/decline"
+  | "champ-select/swap/request"
+  | "champ-select/swap/cancel";
 
 export async function action(name: ActionName, body?: Record<string, unknown>): Promise<void> {
   const res = await authed(`/api/${name}`, {
