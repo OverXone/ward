@@ -180,7 +180,8 @@ const seconds = computed(() => champSelectSecondsLeft());
     <div v-if="cs.myTurn" class="action-bar">
       <ChampIcon :id="serverSelected" :size="52" />
       <button class="btn btn-huge lock" :class="cs.myTurn.type === 'ban' ? 'btn-danger' : 'btn-accept'" :disabled="!canLock" @click="lock">
-        <template v-if="!serverSelected">{{ cs.myTurn.type === "ban" ? "Choose a ban" : "Choose a champion" }}</template>
+        <template v-if="busy">{{ cs.myTurn.type === "ban" ? "Banning" : "Locking in" }} {{ championName(serverSelected) }}…</template>
+        <template v-else-if="!serverSelected">{{ cs.myTurn.type === "ban" ? "Choose a ban" : "Choose a champion" }}</template>
         <template v-else-if="banBlocked">A teammate wants {{ championName(serverSelected) }}</template>
         <template v-else>{{ cs.myTurn.type === "ban" ? "Ban" : "Lock in" }} {{ championName(serverSelected) }}</template>
       </button>

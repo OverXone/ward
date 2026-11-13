@@ -11,6 +11,7 @@
  *
  * Keys: l=lobby  q=queue  r=ready check  c=champ select  n=finish current turn  g=in game  0=none  h=help
  *       s / o / t = a teammate asks you to swap roles / pick order / champions
+ *       f = freeze (stop answering HTTP, like a hung client); f again to thaw
  */
 
 import { randomBytes } from "node:crypto";
@@ -422,7 +423,15 @@ function readBody(req: any): Promise<any> {
   });
 }
 
+/** Key f: stop answering HTTP (sockets stay open), like a frozen client. Press again to thaw. */
+let frozen = false;
+function toggleFreeze(): void {
+  frozen = !frozen;
+  say(frozen ? "FROZEN: not answering HTTP" : "thawed");
+}
+
 async function handle(req: any, res: any): Promise<void> {
+  if (frozen) return; // never answer
   if (req.headers.authorization !== expectedAuth) return lcuError(res, 401, "Unauthorized");
   const url = new URL(req.url, "https://127.0.0.1");
   const p = url.pathname;
@@ -581,6 +590,7 @@ if (process.stdin.isTTY) {
     else if (k === "c") toChampSelect();
     else if (k === "n") finishCurrentTurn();
     else if (k === "g") toGame();
+    else if (k === "f") toggleFreeze();
     else if (k === "s") incomingSwap("positionSwaps", 1);
     else if (k === "o") incomingSwap("pickOrderSwaps", 4);
     else if (k === "t") incomingSwap("trades", 0);
@@ -591,6 +601,7 @@ if (process.stdin.isTTY) {
   readline.createInterface({ input: process.stdin }).on("line", (line) => {
     const k = line.trim();
     const swaps: Record<string, () => void> = {
+      f: toggleFreeze,
       s: () => incomingSwap("positionSwaps", 1),
       o: () => incomingSwap("pickOrderSwaps", 4),
       t: () => incomingSwap("trades", 0),

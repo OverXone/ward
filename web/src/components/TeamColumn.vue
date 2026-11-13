@@ -24,8 +24,11 @@ const canOffer = (p: ChampSelectPlayer) => Object.values(p.swaps).includes("avai
         <div class="info">
           <span class="name">{{ p.name }}</span>
           <span class="meta">
-            <template v-if="p.activeAction">{{ p.activeAction === "ban" ? "Banning…" : "Picking…" }}</template>
-            <template v-else>{{ POSITION_NAMES[p.position] ?? "" }}</template>
+            <template v-if="POSITION_NAMES[p.position]">{{ POSITION_NAMES[p.position] }}</template>
+            <template v-if="p.activeAction">
+              <template v-if="POSITION_NAMES[p.position]"> · </template>
+              <span class="doing">{{ p.activeAction === "ban" ? "Banning…" : "Picking…" }}</span>
+            </template>
           </span>
         </div>
         <span v-if="canOffer(p)" class="swap-badge" aria-hidden="true">⇄</span>
@@ -106,11 +109,11 @@ button.player {
 .enemy .active {
   border-color: var(--enemy);
 }
-.active .meta {
+.active .doing {
   color: var(--text);
   font-weight: 600;
 }
-.banning .meta {
+.banning .doing {
   color: var(--danger);
 }
 </style>

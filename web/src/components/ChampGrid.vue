@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import type { ChampionSummary } from "@shared/phone-api";
-import { computed, ref } from "vue";
+import { computed, onBeforeUnmount, ref } from "vue";
+import { favorites, toggleFavorite } from "../favorites";
+import { showToast } from "../store";
 import ChampIcon from "./ChampIcon.vue";
 
 const props = defineProps<{
@@ -20,11 +22,48 @@ const fold = (s: string) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCa
 const filtered = computed(() => {
   const q = fold(search.value);
   const matches = props.champions.filter((c) => !q || fold(c.name).includes(q) || fold(c.alias).includes(q));
+  // When picking, favorites come first (each group stays alphabetical). Not when banning:
+  // the champions you like to play are the last ones you want at the top of a ban list.
   const available = matches.filter((c) => props.enabled.has(c.id) && !props.reasons?.has(c.id));
+  if (props.mode === "pick") available.sort((a, b) => Number(favorites.has(b.id)) - Number(favorites.has(a.id)));
   // Unavailable champions only appear when searching, greyed out, so you can see why they're missing.
   const unavailable = q ? matches.filter((c) => !props.enabled.has(c.id) || props.reasons?.has(c.id)) : [];
   return { available, unavailable };
 });
+
+// Long-press a champion to add it to (or remove it from) favorites. A normal tap still chooses it.
+const LONG_PRESS_MS = 500;
+let pressTimer: number | undefined;
+let longPressed = false;
+
+function pressStart(id: number, name: string) {
+  longPressed = false;
+  window.clearTimeout(pressTimer);
+  pressTimer = window.setTimeout(() => {
+    longPressed = true;
+    const on = toggleFavorite(id);
+    try {
+      navigator.vibrate?.(30);
+    } catch {
+      // unsupported
+    }
+    showToast(on ? `${name} added to favorites` : `${name} removed from favorites`, "info");
+  }, LONG_PRESS_MS);
+}
+
+function pressEnd() {
+  window.clearTimeout(pressTimer);
+}
+
+function tap(id: number) {
+  if (longPressed) {
+    longPressed = false;
+    return;
+  }
+  emit("choose", id);
+}
+
+onBeforeUnmount(pressEnd);
 </script>
 
 <template>
@@ -40,6 +79,7 @@ const filtered = computed(() => {
         enterkeyhint="search"
       />
     </div>
+    <p v-if="mode === 'pick' && !favorites.size && filtered.available.length" class="hint">Tip: long-press a champion to pin it to the top.</p>
     <div class="grid">
       <button
         v-for="c in filtered.available"
@@ -47,9 +87,15 @@ const filtered = computed(() => {
         class="cell"
         :class="{ selected: c.id === selected, ban: mode === 'ban' }"
         :aria-pressed="c.id === selected"
-        @click="emit('choose', c.id)"
+        @click="tap(c.id)"
+        @pointerdown="pressStart(c.id, c.name)"
+        @pointerup="pressEnd"
+        @pointerleave="pressEnd"
+        @pointercancel="pressEnd"
+        @contextmenu.prevent
       >
         <ChampIcon :id="c.id" :size="64" />
+        <span v-if="favorites.has(c.id)" class="fav" aria-label="Favorite">★</span>
         <span class="cname">{{ c.name }}</span>
       </button>
       <button v-for="c in filtered.unavailable" :key="'u' + c.id" class="cell unavailable" disabled>
@@ -83,6 +129,9 @@ const filtered = computed(() => {
   gap: 8px;
 }
 .cell {
+  position: relative;
+  -webkit-touch-callout: none;
+  user-select: none;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -116,6 +165,20 @@ const filtered = computed(() => {
   font-size: 10px;
   color: var(--muted);
   line-height: 1.1;
+  text-align: center;
+}
+.fav {
+  position: absolute;
+  top: 0;
+  right: 4px;
+  font-size: 14px;
+  color: var(--gold);
+  text-shadow: 0 0 3px #000;
+}
+.hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted);
   text-align: center;
 }
 .none {

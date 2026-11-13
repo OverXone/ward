@@ -15,6 +15,9 @@ import { LcuHttp } from "./http";
 import { LcuSocket, type LcuEvent } from "./socket";
 
 const POLL_MS = 2000;
+const HEALTH_MS = 15_000;
+const HEALTH_TIMEOUT_MS = 5000;
+const HEALTH_PATH = "/lol-gameflow/v1/gameflow-phase";
 
 export declare interface LcuManager {
   on(event: "status", listener: (s: LcuStatus) => void): this;
@@ -95,7 +98,23 @@ export class LcuManager extends EventEmitter {
     this.setStatus("connected");
     this.emit("connected", http, creds);
 
+    // A frozen client (or a PC waking from sleep) can leave the websocket open but dead, and the phone
+    // would show stale state forever. Any HTTP answer counts as alive; two failed checks in a row
+    // close the socket, which ends this session and starts a fresh discovery.
+    let failures = 0;
+    const health = setInterval(() => {
+      void http.request("GET", HEALTH_PATH, undefined, HEALTH_TIMEOUT_MS).then(
+        () => (failures = 0),
+        () => {
+          if (++failures < 2) return;
+          log.warn("League client stopped answering; reconnecting.");
+          socket.close();
+        },
+      );
+    }, HEALTH_MS);
+
     await closed;
+    clearInterval(health);
 
     this.socket = null;
     this.http = null;
