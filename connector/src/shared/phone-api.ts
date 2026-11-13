@@ -152,6 +152,8 @@ export interface RecommendedRunes {
   subStyleId: number;
   keystoneId: number;
   keystoneName: string;
+  /** Role it's made for: "top" | "jungle" | "middle" | "bottom" | "utility" | "". */
+  position: string;
 }
 
 /** A lobby invitation someone sent me. */

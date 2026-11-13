@@ -22,6 +22,8 @@ if (props.championId > 0) {
   );
 }
 
+const ROLES: Record<string, string> = { top: "Top", jungle: "Jungle", middle: "Mid", bottom: "Bot", utility: "Support" };
+
 const mine = computed(() => props.runes.pages.filter((p) => p.isEditable));
 const presets = computed(() => props.runes.pages.filter((p) => !p.isEditable));
 const busy = ref<string | null>(null);
@@ -52,7 +54,7 @@ async function apply(r: RecommendedRunes) {
         <AssetImage kind="perk" :id="r.keystoneId" :width="36" :label="r.keystoneName" class="round" />
         <span class="text">
           <span class="name">{{ r.keystoneName || styleName(r.primaryStyleId) }}</span>
-          <span class="meta">{{ styleName(r.primaryStyleId) }} + {{ styleName(r.subStyleId) }}</span>
+          <span class="meta">{{ [ROLES[r.position], `${styleName(r.primaryStyleId)} + ${styleName(r.subStyleId)}`].filter(Boolean).join(" · ") }}</span>
         </span>
         <span v-if="busy === `rec:${r.index}`" class="state">Saving…</span>
       </button>

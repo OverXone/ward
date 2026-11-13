@@ -180,7 +180,7 @@ const FRIENDS = [
   { summonerId: 2004, gameName: "ValorantMain", availability: "chat", product: "valorant", lol: null },
   { summonerId: 2005, gameName: "Sleepy", availability: "offline", product: "league_of_legends", lol: null },
   { summonerId: 2006, gameName: "OnTheBus", availability: "mobile", product: "league_of_legends", lol: null },
-].map((f) => ({ ...f, name: f.gameName, puuid: `puuid-${f.summonerId}`, pid: `${f.summonerId}@mock.pvp.net`, note: "" }));
+].map((f) => ({ ...f, name: f.gameName, puuid: `0000mock-0000-0000-0000-00000000${f.summonerId}`, pid: `${f.summonerId}@mock.pvp.net`, note: "" }));
 const INVITATIONS = "/lol-lobby/v2/received-invitations";
 let invitations: { invitationId: string; state: string; canAcceptInvitation: boolean; fromSummonerId: number; fromSummonerName: string; gameConfig: { queueId: number; gameMode: string } }[] = [];
 let sentInvites: { toSummonerId: number; state: string }[] = [];
@@ -698,9 +698,10 @@ async function handle(req: any, res: any): Promise<void> {
   if (m === "GET" && p === "/lol-lobby/v2/lobby/invitations") return state[URIS.phase] === "Lobby" ? json(200, sentInvites) : lcuError(res, 404, "No lobby");
   if (m === "POST" && p === "/lol-lobby/v2/lobby/invitations") {
     if (state[URIS.phase] !== "Lobby") return lcuError(res, 400, "NOT_IN_LOBBY");
-    const ids = Array.isArray(body) ? body.map((x: any) => x?.toSummonerId) : [];
-    if (!ids.length || !ids.every((id: unknown) => FRIENDS.some((f) => f.summonerId === id))) return lcuError(res, 400, "INVALID_INVITEE");
-    for (const id of ids as number[]) {
+    // Like LolLobbyLobbyInvitationDto: toSummonerId and/or toPuuid.
+    const invitees = Array.isArray(body) ? body.map((x: any) => FRIENDS.find((f) => f.summonerId === x?.toSummonerId || f.puuid === x?.toPuuid)) : [];
+    if (!invitees.length || invitees.some((f) => !f)) return lcuError(res, 400, "INVALID_INVITEE");
+    for (const id of invitees.map((f) => f!.summonerId)) {
       sentInvites.push({ toSummonerId: id, state: "Pending" });
       const name = FRIENDS.find((f) => f.summonerId === id)!.gameName;
       say(`invited ${name}; they join in 3 s`);

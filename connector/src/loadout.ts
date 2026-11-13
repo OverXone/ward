@@ -25,9 +25,12 @@ export interface RuneRecommendation {
   perkIds: number[];
   keystoneId: number;
   keystoneName: string;
+  /** Lowercase role League made it for ("middle", "utility", ...), or "". */
+  position: string;
 }
 
 interface RawRecommendation {
+  position?: unknown;
   primaryPerkStyleId?: unknown;
   secondaryPerkStyleId?: unknown;
   primaryStyleId?: unknown;
@@ -188,15 +191,13 @@ export class Loadout {
     const championId = isId(me.championId) ? me.championId : isId(me.championPickIntent) ? me.championPickIntent : 0;
     if (!championId) return null;
     const mapId = isId(flow?.gameData?.queue?.mapId) ? flow.gameData.queue.mapId : 11;
-    const assigned = typeof me.assignedPosition === "string" && /^[a-z]{1,16}$/i.test(me.assignedPosition) ? me.assignedPosition : "";
-    // Which spelling League wants for "no position" isn't verified; try the plain ones in order.
-    for (const position of [...new Set([assigned, "NONE", "none"].filter(Boolean))]) {
-      const raw = await http.getOrNull<RawRecommendation[]>(`/lol-perks/v1/recommended-pages/champion/${championId}/position/${position}/map/${mapId}`);
-      if (http !== this.http) return null;
-      if (!Array.isArray(raw) || !raw.length) continue;
-      return { championId, list: raw.slice(0, 6).map((r) => this.parseRecommendation(r)).filter((r): r is RuneRecommendation => !!r) };
-    }
-    return { championId, list: [] };
+    // Live client (2026-11-13): League wants MIDDLE/UTILITY/...; anything else (lowercase too) silently
+    // gets the champion's default role, which is also what NONE (blind pick, ARAM) is meant to give.
+    const assigned = typeof me.assignedPosition === "string" && /^[a-z]{1,16}$/i.test(me.assignedPosition) ? me.assignedPosition.toUpperCase() : "";
+    const raw = await http.getOrNull<RawRecommendation[]>(`/lol-perks/v1/recommended-pages/champion/${championId}/position/${assigned || "NONE"}/map/${mapId}`);
+    if (http !== this.http) return null;
+    const list = Array.isArray(raw) ? raw.slice(0, 6).map((r) => this.parseRecommendation(r)).filter((r): r is RuneRecommendation => !!r) : [];
+    return { championId, list };
   }
 
   private parseRecommendation(r: RawRecommendation): RuneRecommendation | null {
@@ -208,7 +209,8 @@ export class Loadout {
     const keystoneId = isId(keystone?.id) ? keystone.id : (perkIds[0] as number);
     const icon = assetPath(keystone?.iconPath);
     if (icon) this.imagePaths.set(`perk:${keystoneId}`, icon);
-    return { primaryStyleId, subStyleId, perkIds: perkIds as number[], keystoneId, keystoneName: text(keystone?.name, 40) };
+    const position = typeof r.position === "string" && /^[A-Z]{1,16}$/i.test(r.position) ? r.position.toLowerCase() : "";
+    return { primaryStyleId, subStyleId, perkIds: perkIds as number[], keystoneId, keystoneName: text(keystone?.name, 40), position };
   }
 
   /** The recommendations as the phone sees them. */
@@ -222,6 +224,7 @@ export class Loadout {
       subStyleId: r.subStyleId,
       keystoneId: r.keystoneId,
       keystoneName: r.keystoneName,
+      position: r.position,
     }));
   }
 

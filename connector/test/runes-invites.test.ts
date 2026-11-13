@@ -1,9 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { runAction, type ActionContext, type ActionName } from "../src/actions";
 import { deriveFriends, type RawFriend } from "../src/friends";
 import { Handles } from "../src/handles";
 import type { LcuHttp } from "../src/lcu/http";
-import type { RuneRecommendation } from "../src/loadout";
+import { Loadout, type RuneRecommendation } from "../src/loadout";
 import { deriveInvitations, deriveRunes, Store, URI } from "../src/state/store";
 import { expectError, fakeLcu, ok, type Route } from "./fake-lcu";
 import { draftSession } from "./fixtures/sessions";
@@ -44,9 +44,14 @@ describe("rune pages view", () => {
     expect(JSON.stringify(view)).not.toMatch(/"id"|101|102/);
   });
 
-  it("trusts /currentpage over the page flags", () => {
+  it("follows the pages' live `current` flag (League sends no /currentpage event)", () => {
     const view = deriveRunes(PAGES, { id: 101 }, new Handles())!;
-    expect(view.pages.find((p) => p.isCurrent)?.name).toBe("Mid mage");
+    expect(view.pages.find((p) => p.isCurrent)?.name).toBe("Jungle");
+  });
+
+  it("uses /currentpage only when no page is flagged", () => {
+    const unflagged = PAGES.map((p) => ({ ...p, current: false }));
+    expect(deriveRunes(unflagged, { id: 101 }, new Handles())!.pages.find((p) => p.isCurrent)?.name).toBe("Mid mage");
   });
 
   it("is null when the client gave no list", () => {
@@ -140,7 +145,7 @@ describe("runes/select", () => {
 });
 
 describe("runes/recommended", () => {
-  const REC: RuneRecommendation = { primaryStyleId: 8200, subStyleId: 8300, perkIds: [8214, 8226, 8210, 8237, 8304, 8345, 5008, 5002, 5001], keystoneId: 8214, keystoneName: "Summon Aery" };
+  const REC: RuneRecommendation = { primaryStyleId: 8200, subStyleId: 8300, perkIds: [8214, 8226, 8210, 8237, 8304, 8345, 5008, 5002, 5001], keystoneId: 8214, keystoneName: "Summon Aery", position: "middle" };
   const champs = async () => [{ id: 103, name: "Ahri" }];
   const setup = (pages: unknown[], extra: Record<string, Route> = {}, championId = 103) => {
     const lcu = fakeLcu({
@@ -179,7 +184,10 @@ describe("runes/recommended", () => {
     const full = [...PAGES, { id: 103, name: "Top", isEditable: true }];
     const s = setup(full);
     await expectError(act("runes/recommended", body, s.ctx), 409, /rename one to "Phone"/);
-    expect(s.lcu.writes()).toHaveLength(0);
+    // League's own answer wins over counting (live client: canAddCustomPage).
+    const said = setup(PAGES, { "GET /lol-perks/v1/inventory": ok({ canAddCustomPage: false, ownedPageCount: 3 }) });
+    await expectError(act("runes/recommended", body, said.ctx), 409, /in use/);
+    expect([...s.lcu.writes(), ...said.lcu.writes()]).toHaveLength(0);
   });
 
   it("refuses a stale champion or index and bad input", async () => {
@@ -254,6 +262,22 @@ describe("lobby/invite", () => {
     expect(s.lcu.writes()).toEqual([{ method: "POST", path: "/lol-lobby/v2/lobby/invitations", body: [{ toSummonerId: 2001 }] }]);
   });
 
+  it("keys friends by puuid and sends it, also for friends without a summoner id", async () => {
+    const puuid = "p".repeat(36);
+    const s = setup();
+    FRIENDS.push({ puuid, gameName: "NoSummonerId", availability: "chat", product: "league_of_legends" });
+    try {
+      const h = new Handles();
+      const listed = deriveFriends(FRIENDS, null, null, h).find((f) => f.name === "NoSummonerId")!;
+      expect(h.resolve("friend", listed.handle)).toBe(puuid);
+      expect(JSON.stringify(listed)).not.toContain(puuid);
+      await act("lobby/invite", { friend: s.ctx.handles!.handle("friend", puuid) }, s.ctx);
+      expect(s.lcu.writes()[0]!.body).toEqual([{ toPuuid: puuid }]);
+    } finally {
+      FRIENDS.pop();
+    }
+  });
+
   it("refuses offline friends, people already in the lobby and unknown handles", async () => {
     const s = setup();
     await expectError(act("lobby/invite", { friend: s.handleOf(2005) }, s.ctx), 409, /offline/);
@@ -274,7 +298,48 @@ describe("lobby/invite", () => {
   });
 });
 
+describe("rune recommendations", () => {
+  it("asks League with the position in capitals, and NONE without one (live client, 2026-11-13)", async () => {
+    const gets: string[] = [];
+    const session = draftSession();
+    const fake = (position: string) =>
+      ({
+        async getOrNull(p: string) {
+          gets.push(p);
+          if (p === "/lol-champ-select/v1/session") {
+            return { ...session, myTeam: session.myTeam.map((m) => (m.cellId === session.localPlayerCellId ? { ...m, championId: 103, assignedPosition: position } : m)) };
+          }
+          if (p === "/lol-gameflow/v1/session") return { gameData: { queue: { mapId: 12 } } };
+          return p.startsWith("/lol-perks/v1/recommended-pages/") ? [] : null;
+        },
+      }) as unknown as LcuHttp;
+    for (const [position, expected] of [["middle", "MIDDLE"], ["", "NONE"]] as const) {
+      const loadout = new Loadout();
+      loadout.attach(fake(position));
+      expect(await loadout.recommendations()).toEqual({ championId: 103, list: [] });
+      expect(gets.at(-1)).toBe(`/lol-perks/v1/recommended-pages/champion/103/position/${expected}/map/12`);
+    }
+  });
+});
+
 describe("store: runes and invitations", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it("re-reads invitations every 5 s in case League sends no event for them", async () => {
+    vi.useFakeTimers();
+    const answers: Record<string, unknown> = { [URI.phase]: "None", [URI.invitations]: [] };
+    const http = { getOrNull: async (p: string) => answers[p] ?? null } as unknown as LcuHttp;
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(http);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(store.state.invitations).toEqual([]);
+    answers[URI.invitations] = [{ invitationId: "x", state: "Pending" }];
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(store.state.invitations).toHaveLength(1);
+    store.detach();
+  });
+
   it("pushes rune pages and invitations, and looks up who invited me", async () => {
     const answers: Record<string, unknown> = {
       [URI.phase]: "Lobby",
@@ -296,7 +361,7 @@ describe("store: runes and invitations", () => {
     for (let i = 0; i < 4; i++) await tick();
     expect(store.state.invitations[0]).toMatchObject({ from: "DuoPartner", queueName: "Ranked Flex", canAccept: true });
 
-    store.handleEvent({ uri: URI.currentRunePage, eventType: "Update", data: PAGES[1] });
+    store.handleEvent({ uri: URI.runePages, eventType: "Update", data: PAGES.map((p) => ({ ...p, current: p.id === 101 })) });
     expect(store.state.runes?.pages.find((p) => p.isCurrent)?.name).toBe("Mid mage");
     store.handleEvent({ uri: URI.invitations, eventType: "Delete", data: null });
     expect(store.state.invitations).toEqual([]);

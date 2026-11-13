@@ -143,6 +143,9 @@ const styleId = (v: unknown) => (isId(v) ? v : 0);
 /** Pages the phone can choose from. Custom pages first, then League's presets, each in the client's order. */
 export function deriveRunes(pages: RawRunePage[] | null, current: RawRunePage | null, handles: Handles): RunesView | null {
   if (!Array.isArray(pages)) return null;
+  // Live client (2026-11-13): there's no /currentpage event, but every pages event carries `current`,
+  // so the flag wins; the /currentpage answer is only used when no page is flagged.
+  const flagged = pages.some((p) => p?.current === true);
   const currentId = isId(current?.id) ? current.id : null;
   const list = pages
     .filter((p) => p && isId(p.id) && typeof p.name === "string" && p.isTemporary !== true)
@@ -153,7 +156,7 @@ export function deriveRunes(pages: RawRunePage[] | null, current: RawRunePage | 
       subStyleId: styleId(p.subStyleId),
       isEditable: p.isEditable !== false,
       isValid: p.isValid !== false,
-      isCurrent: currentId !== null ? p.id === currentId : p.current === true,
+      isCurrent: flagged ? p.current === true : p.id === currentId,
     }));
   return { pages: [...list.filter((p) => p.isEditable), ...list.filter((p) => !p.isEditable)] };
 }
@@ -230,6 +233,7 @@ export class Store extends EventEmitter {
   /** Riot ID game names of people who invited me, by summoner id. */
   private inviterNames = new Map<number, string>();
   private inviterLookups = new Set<number>();
+  private invitationPoll: NodeJS.Timeout | null = null;
   /** Opaque names the phone uses for rune pages, invitations and friends (see handles.ts). */
   readonly handles = new Handles();
   state: PhoneState = this.derive();
@@ -248,11 +252,17 @@ export class Store extends EventEmitter {
     this.inviterLookups.clear();
     this.handles.clear();
     void this.refreshAll();
+    // The client's API list names no event for received invitations, so also re-read them (GET only).
+    if (this.invitationPoll) clearInterval(this.invitationPoll);
+    this.invitationPoll = setInterval(() => void this.pollInvitations(), 5000);
+    this.invitationPoll.unref?.();
   }
 
   detach(): void {
     this.http = null;
     this.raw = emptyRaw();
+    if (this.invitationPoll) clearInterval(this.invitationPoll);
+    this.invitationPoll = null;
     if (this.snapshotRetry) clearTimeout(this.snapshotRetry);
     this.snapshotRetry = null;
     this.recompute();
@@ -399,6 +409,17 @@ export class Store extends EventEmitter {
         void this.refreshAll();
       }
     }
+  }
+
+  private async pollInvitations(): Promise<void> {
+    const http = this.http;
+    if (!http) return;
+    const before = this.versions.get("invitations") ?? 0;
+    const value = await http.getOrNull(URI.invitations);
+    // A live event that arrived meanwhile is newer; null (error) keeps what we have.
+    if (http !== this.http || value === null || (this.versions.get("invitations") ?? 0) !== before) return;
+    this.setRaw("invitations", value, false);
+    this.recompute();
   }
 
   /** Fetches the inviter's name and the queue name for each new pending invitation. */

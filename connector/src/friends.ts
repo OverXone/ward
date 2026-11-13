@@ -16,6 +16,7 @@ import type { FriendOption } from "./shared/phone-api";
 
 export interface RawFriend {
   summonerId?: unknown;
+  puuid?: unknown;
   gameName?: unknown;
   name?: unknown;
   availability?: unknown;
@@ -24,15 +25,24 @@ export interface RawFriend {
 }
 
 interface RawLobbyForInvites {
-  members?: { summonerId?: unknown }[];
+  members?: { summonerId?: unknown; puuid?: unknown }[];
 }
 
 interface RawSentInvite {
   toSummonerId?: unknown;
+  toPuuid?: unknown;
   state?: unknown;
 }
 
 const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
+const PUUID = /^[A-Za-z0-9_-]{20,100}$/;
+const puuidOf = (v: unknown) => (typeof v === "string" && PUUID.test(v) ? v : null);
+
+/**
+ * How a friend is keyed: puuid, since on a live client (2026-11-13) only 40 of 65 friends had a
+ * summonerId, and League's invitation type takes `toPuuid`. Summoner id only if there's no puuid.
+ */
+export const friendKey = (f: RawFriend): string | number | null => puuidOf(f.puuid) ?? (isId(f.summonerId) ? f.summonerId : null);
 
 const GAME_STATUS: Record<string, string> = {
   inQueue: "In queue",
@@ -59,22 +69,24 @@ export function deriveFriends(
   handles: Handles,
 ): FriendOption[] {
   if (!Array.isArray(friends)) return [];
-  const members = new Set((lobby?.members ?? []).map((m) => m?.summonerId).filter(isId));
-  const invited = new Set(
-    (Array.isArray(sent) ? sent : []).filter((i) => i?.state === "Pending" || i?.state === "Requested").map((i) => i.toSummonerId).filter(isId),
-  );
+  // Both ids, so a friend matches whichever one League filled in.
+  const ids = (x: { summonerId?: unknown; puuid?: unknown }) => [x.summonerId, x.puuid].filter((v) => isId(v) || puuidOf(v));
+  const members = new Set((lobby?.members ?? []).flatMap((m) => (m ? ids(m) : [])));
+  const pending = (Array.isArray(sent) ? sent : []).filter((i) => i?.state === "Pending" || i?.state === "Requested");
+  const invited = new Set(pending.flatMap((i) => ids({ summonerId: i.toSummonerId, puuid: i.toPuuid })));
+  const has = (set: Set<unknown>, f: RawFriend) => ids(f).some((v) => set.has(v));
   const out = friends
-    .filter((f) => f && isId(f.summonerId) && inLeague(f))
+    .filter((f) => f && friendKey(f) !== null && inLeague(f))
     .map((f) => {
-      const id = f.summonerId as number;
+      const key = friendKey(f)!;
       const name = [f.gameName, f.name].find((n): n is string => typeof n === "string" && n.trim() !== "")?.trim().slice(0, 32) ?? "Friend";
       const game = typeof f.lol?.gameStatus === "string" ? GAME_STATUS[f.lol.gameStatus] : undefined;
       let status = game ?? (f.availability === "away" ? "Away" : "Online");
       let canInvite = true;
-      if (members.has(id)) [status, canInvite] = ["In your lobby", false];
-      else if (invited.has(id)) [status, canInvite] = ["Invited", false];
+      if (has(members, f)) [status, canInvite] = ["In your lobby", false];
+      else if (has(invited, f)) [status, canInvite] = ["Invited", false];
       const rank = game ? 2 : f.availability === "away" ? 1 : 0;
-      return { handle: handles.handle("friend", id), name, status, canInvite, rank };
+      return { handle: handles.handle("friend", key), name, status, canInvite, rank };
     })
     // Invitable first (online, then away, then busy), then the ones already with me; alphabetical within each.
     .sort((a, b) => Number(b.canInvite) - Number(a.canInvite) || a.rank - b.rank || a.name.localeCompare(b.name));
@@ -82,11 +94,16 @@ export function deriveFriends(
 }
 
 export async function listFriends(http: LcuHttp, handles: Handles): Promise<FriendOption[] | null> {
+  return (await readFriends(http, handles))?.options ?? null;
+}
+
+/** The phone's view plus the raw list it came from (actions need the ids behind a handle). */
+export async function readFriends(http: LcuHttp, handles: Handles): Promise<{ options: FriendOption[]; raw: RawFriend[] } | null> {
   const [friends, lobby, sent] = await Promise.all([
     http.getOrNull<RawFriend[]>("/lol-chat/v1/friends"),
     http.getOrNull<RawLobbyForInvites>("/lol-lobby/v2/lobby"),
     http.getOrNull<RawSentInvite[]>("/lol-lobby/v2/lobby/invitations"),
   ]);
   if (!Array.isArray(friends)) return null;
-  return deriveFriends(friends, lobby, sent, handles);
+  return { options: deriveFriends(friends, lobby, sent, handles), raw: friends };
 }

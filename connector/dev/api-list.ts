@@ -70,7 +70,10 @@ async function main(): Promise<void> {
     console.log(`Saved the full API list to ${file}`);
   }
   const help = JSON.parse(body) as { functions?: Fn[]; types?: TypeDef[]; events?: { name?: string }[] };
-  const match = (s: string | undefined) => !filters.length || filters.some((f) => (s ?? "").toLowerCase().includes(f));
+  // Current clients list no URLs, only names like GetLolPerksV1Pages, so compare without punctuation:
+  // the filter "lol-perks/v1/pages" matches that name.
+  const flat = (x: string) => x.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const match = (s: string | undefined) => !filters.length || filters.some((f) => flat(s ?? "").includes(flat(f)));
 
   const fns = (help.functions ?? []).filter((f) => match(f.url) || match(f.name));
   console.log(`\n=== Endpoints (${fns.length}) ===`);
@@ -80,9 +83,23 @@ async function main(): Promise<void> {
     console.log(`${method.padEnd(6)} ${f.url ?? f.name}  (${params}) -> ${typeName(f.returns)}`);
   }
 
-  // Types named after a matching endpoint's plugin, or matching a filter directly.
-  const plugins = new Set(fns.map((f) => (f.url ?? "").split("/")[1]?.replace(/-/g, "").toLowerCase()).filter(Boolean));
-  const types = (help.types ?? []).filter((t) => match(t.name) || [...plugins].some((p) => (t.name ?? "").toLowerCase().startsWith(p!)));
+  // Types the matching endpoints take or return, and the types inside those (a few levels deep).
+  const byName = new Map((help.types ?? []).map((t) => [t.name ?? "", t]));
+  const wanted = new Set<string>();
+  const add = (t: unknown, depth: number) => {
+    const o = (t ?? {}) as { type?: string; elementType?: string };
+    for (const n of [o.type, o.elementType]) {
+      const def = n ? byName.get(n) : undefined;
+      if (!def || wanted.has(n!)) continue;
+      wanted.add(n!);
+      if (depth < 3) for (const fld of def.fields ?? []) add(fld.type, depth + 1);
+    }
+  };
+  for (const f of fns) {
+    add(f.returns, 0);
+    for (const a of f.arguments ?? []) add(a.type, 0);
+  }
+  const types = [...wanted].map((n) => byName.get(n)!);
   console.log(`\n=== Types (${types.length}) ===`);
   for (const t of types) {
     if (t.values?.length) {

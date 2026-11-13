@@ -8,7 +8,7 @@
  * Adding a feature later (summoner spells, runes, skins, lobby) = add an entry here.
  */
 
-import { listFriends } from "./friends";
+import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import type { RuneRecommendation } from "./loadout";
@@ -456,9 +456,14 @@ const ACTIONS = {
         await setCurrentPage(http, own.id);
         return;
       }
-      const inventory = await http.getOrNull<{ ownedPageCount?: unknown }>("/lol-perks/v1/inventory");
+      // Live client (2026-11-13): {"canAddCustomPage":true,"customPageCount":1,"ownedPageCount":3,...}
+      const inventory = await http.getOrNull<{ canAddCustomPage?: unknown; ownedPageCount?: unknown }>("/lol-perks/v1/inventory");
       const owned = inventory?.ownedPageCount;
-      if (Number.isInteger(owned) && pages.filter(isEditablePage).length >= (owned as number)) {
+      const full =
+        typeof inventory?.canAddCustomPage === "boolean"
+          ? !inventory.canAddCustomPage
+          : Number.isInteger(owned) && pages.filter(isEditablePage).length >= (owned as number);
+      if (full) {
         throw new ActionError(409, 'All your rune pages are in use. On your PC, delete one or rename one to "Phone" and the connector will use that one.');
       }
       const created = await http.json<{ id?: unknown }>("POST", RUNE_PAGES, page);
@@ -476,17 +481,22 @@ const ACTIONS = {
     validate: (input) => void handleFrom(input, "friend"),
     async run(input, http, ctx) {
       const handle = handleFrom(input, "friend");
-      const summonerId = resolveHandle(ctx, "friend", handle);
+      const key = resolveHandle(ctx, "friend", handle);
       if ((await getPhase(http)) !== "Lobby") throw new ActionError(409, "Open a lobby first");
       const lobby = await http.getOrNull<{ localMember?: { isLeader?: unknown; allowedInviteOthers?: unknown } }>(URI.lobby);
       const allowed = lobby?.localMember?.allowedInviteOthers ?? lobby?.localMember?.isLeader;
       if (allowed !== true) throw new ActionError(409, "Only the party leader can invite to this lobby");
       // Re-check against the live friends list: still a friend, still online in League, not already here.
-      const friend = (await listFriends(http, ctx.handles!))?.find((f) => f.handle === handle);
-      if (!friend) throw new ActionError(409, `${HANDLE_GONE.friend}, or they went offline`);
+      const friends = await readFriends(http, ctx.handles!);
+      const friend = friends?.options.find((f) => f.handle === handle);
+      const raw = friends?.raw.find((f) => friendKey(f) === key);
+      if (!friend || !raw) throw new ActionError(409, `${HANDLE_GONE.friend}, or they went offline`);
       if (!friend.canInvite) throw new ActionError(409, `${friend.name}: ${friend.status.toLowerCase()}`);
-      if (typeof summonerId !== "number") throw new ActionError(500, "invalid friend from client");
-      const status = await call(http, "POST", "/lol-lobby/v2/lobby/invitations", [{ toSummonerId: summonerId }]);
+      // LolLobbyLobbyInvitationDto takes toSummonerId and toPuuid; send whichever the friend has.
+      const invite: Record<string, unknown> = {};
+      if (Number.isInteger(raw.summonerId) && (raw.summonerId as number) > 0) invite.toSummonerId = raw.summonerId;
+      if (typeof raw.puuid === "string" && raw.puuid) invite.toPuuid = raw.puuid;
+      const status = await call(http, "POST", "/lol-lobby/v2/lobby/invitations", [invite]);
       if (status === 404) throw new ActionError(502, "This League client can't send invitations from here. Use your PC.");
     },
   },
