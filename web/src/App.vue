@@ -62,10 +62,10 @@ const reconnecting = computed(() => app.paired && app.state && app.socket !== "o
   />
   <PairScreen v-if="view.kind === 'pair'" />
   <StatusScreen v-else-if="view.kind === 'status'" :title="view.title" :sub="view.sub" :spinner="view.spinner" :emoji="view.emoji" />
-  <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" :runes="app.state!.runes" />
+  <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" />
   <QueueScreen v-else-if="view.kind === 'queue'" :queue="app.state!.queue" :queue-name="app.state!.lobby?.queueName ?? null" />
   <ReadyCheckScreen v-else-if="view.kind === 'ready'" :ready-check="app.state!.readyCheck!" />
-  <ChampSelectScreen v-else-if="view.kind === 'champ'" :cs="app.state!.champSelect!" :runes="app.state!.runes" />
+  <ChampSelectScreen v-else-if="view.kind === 'champ'" :cs="app.state!.champSelect!" />
   <Transition name="toast">
     <div v-if="app.toast" class="toast" :class="app.toast.kind" role="alert">{{ app.toast.text }}</div>
   </Transition>

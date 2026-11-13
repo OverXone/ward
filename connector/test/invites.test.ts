@@ -3,59 +3,24 @@ import { runAction, type ActionContext, type ActionName } from "../src/actions";
 import { deriveFriends, type RawFriend } from "../src/friends";
 import { Handles } from "../src/handles";
 import type { LcuHttp } from "../src/lcu/http";
-import { Loadout, type RuneRecommendation } from "../src/loadout";
-import { deriveInvitations, deriveRunes, Store, URI } from "../src/state/store";
-import { expectError, fakeLcu, ok, type Route } from "./fake-lcu";
-import { draftSession } from "./fixtures/sessions";
+import { deriveInvitations, Store, URI } from "../src/state/store";
+import { expectError, fakeLcu, ok } from "./fake-lcu";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
-
-const PAGES = [
-  { id: 1, name: "Precision", isEditable: false, current: false, primaryStyleId: 8000, subStyleId: 8400 },
-  { id: 101, name: "Mid mage", isEditable: true, current: false, primaryStyleId: 8200, subStyleId: 8300 },
-  { id: 102, name: "Jungle", isEditable: true, current: true, primaryStyleId: 8100, subStyleId: 8000 },
-  { id: 900, name: "Temp", isEditable: true, isTemporary: true },
-];
 
 describe("handles", () => {
   it("gives the same opaque handle for the same object and maps it back only for its kind", () => {
     const h = new Handles();
-    const a = h.handle("page", 101);
+    const a = h.handle("friend", 101);
     expect(a).toMatch(/^[A-Za-z0-9_-]{12}$/);
-    expect(h.handle("page", 101)).toBe(a);
-    expect(h.handle("page", 102)).not.toBe(a);
-    expect(h.handle("invite", "101")).not.toBe(a);
-    expect(h.resolve("page", a)).toBe(101);
-    expect(h.resolve("friend", a)).toBeNull();
-    for (const bad of [101, "101", "", "x".repeat(12), null, { a }]) expect(h.resolve("page", bad)).toBeNull();
+    expect(h.handle("friend", 101)).toBe(a);
+    expect(h.handle("friend", 102)).not.toBe(a);
+    expect(h.handle("friend", "101")).not.toBe(a);
+    expect(h.resolve("friend", a)).toBe(101);
+    expect(h.resolve("invite", a)).toBeNull();
+    for (const bad of [101, "101", "", "x".repeat(12), null, { a }]) expect(h.resolve("friend", bad)).toBeNull();
     h.clear();
-    expect(h.resolve("page", a)).toBeNull();
-  });
-});
-
-describe("rune pages view", () => {
-  it("lists custom pages first, skips temporary ones and never shows page ids", () => {
-    const h = new Handles();
-    const view = deriveRunes(PAGES, null, h)!;
-    expect(view.pages.map((p) => p.name)).toEqual(["Mid mage", "Jungle", "Precision"]);
-    expect(view.pages.map((p) => p.isCurrent)).toEqual([false, true, false]);
-    expect(view.pages[2]!.isEditable).toBe(false);
-    expect(h.resolve("page", view.pages[0]!.handle)).toBe(101);
-    expect(JSON.stringify(view)).not.toMatch(/"id"|101|102/);
-  });
-
-  it("follows the pages' live `current` flag (League sends no /currentpage event)", () => {
-    const view = deriveRunes(PAGES, { id: 101 }, new Handles())!;
-    expect(view.pages.find((p) => p.isCurrent)?.name).toBe("Jungle");
-  });
-
-  it("uses /currentpage only when no page is flagged", () => {
-    const unflagged = PAGES.map((p) => ({ ...p, current: false }));
-    expect(deriveRunes(unflagged, { id: 101 }, new Handles())!.pages.find((p) => p.isCurrent)?.name).toBe("Mid mage");
-  });
-
-  it("is null when the client gave no list", () => {
-    expect(deriveRunes(null, null, new Handles())).toBeNull();
+    expect(h.resolve("friend", a)).toBeNull();
   });
 });
 
@@ -110,96 +75,6 @@ describe("friends to invite", () => {
 
 const ctxFor = (http: LcuHttp, handles: Handles, extra: Partial<ActionContext> = {}): ActionContext => ({ http, handles, ...extra });
 const act = (name: ActionName, body: unknown, ctx: ActionContext) => runAction(name, body, ctx);
-
-describe("runes/select", () => {
-  const setup = (phase = "ChampSelect", pages: unknown = PAGES) => {
-    const handles = new Handles();
-    const lcu = fakeLcu({ "GET /lol-gameflow/v1/gameflow-phase": ok(phase), "GET /lol-perks/v1/pages": ok(pages), "PUT /lol-perks/v1/currentpage": ok() });
-    const view = deriveRunes(PAGES, null, handles)!;
-    const handleOf = (name: string) => view.pages.find((p) => p.name === name)!.handle;
-    return { lcu, ctx: ctxFor(lcu.http, handles), handleOf };
-  };
-
-  it("makes the page current, sending League its own page id", async () => {
-    const s = setup();
-    await act("runes/select", { page: s.handleOf("Mid mage") }, s.ctx);
-    expect(s.lcu.writes()).toEqual([{ method: "PUT", path: "/lol-perks/v1/currentpage", body: 101 }]);
-  });
-
-  it("refuses malformed or unknown handles and raw ids", async () => {
-    const s = setup();
-    await expectError(act("runes/select", { page: 101 }, s.ctx), 400, /handle/);
-    await expectError(act("runes/select", { page: "../../x" }, s.ctx), 400);
-    await expectError(act("runes/select", { page: "AAAAAAAAAAAA" }, s.ctx), 409, /isn't there/);
-    await expectError(act("runes/select", { page: s.handleOf("Jungle"), id: 5 }, s.ctx), 400, /unexpected/);
-    expect(s.lcu.writes()).toHaveLength(0);
-  });
-
-  it("re-checks the page against the client's current list, and not during a game", async () => {
-    const gone = setup("Lobby", PAGES.filter((p) => p.id !== 101));
-    await expectError(act("runes/select", { page: gone.handleOf("Mid mage") }, gone.ctx), 409, /isn't there/);
-    const inGame = setup("InProgress");
-    await expectError(act("runes/select", { page: inGame.handleOf("Mid mage") }, inGame.ctx), 409, /during a game/);
-    expect([...gone.lcu.writes(), ...inGame.lcu.writes()]).toHaveLength(0);
-  });
-});
-
-describe("runes/recommended", () => {
-  const REC: RuneRecommendation = { primaryStyleId: 8200, subStyleId: 8300, perkIds: [8214, 8226, 8210, 8237, 8304, 8345, 5008, 5002, 5001], keystoneId: 8214, keystoneName: "Summon Aery", position: "middle" };
-  const champs = async () => [{ id: 103, name: "Ahri" }];
-  const setup = (pages: unknown[], extra: Record<string, Route> = {}, championId = 103) => {
-    const lcu = fakeLcu({
-      "GET /lol-champ-select/v1/session": ok(draftSession()),
-      "GET /lol-perks/v1/pages": ok(pages),
-      "GET /lol-perks/v1/inventory": ok({ ownedPageCount: 3 }),
-      "POST /lol-perks/v1/pages": () => ({ status: 200, json: { id: 555 } }),
-      "PUT /lol-perks/v1/currentpage": ok(),
-      ...extra,
-    });
-    const loadout = { availableSpells: async () => null, selectableSkinIds: async () => null, recommendations: async () => ({ championId, list: [REC] }) };
-    return { lcu, ctx: ctxFor(lcu.http, new Handles(), { loadout, knownChampions: champs }) };
-  };
-  const body = { championId: 103, index: 0 };
-
-  it("creates a new page named for the champion when there's a free slot", async () => {
-    const s = setup(PAGES);
-    await act("runes/recommended", body, s.ctx);
-    expect(s.lcu.writes()).toEqual([
-      { method: "POST", path: "/lol-perks/v1/pages", body: { name: "Phone: Ahri", primaryStyleId: 8200, subStyleId: 8300, selectedPerkIds: REC.perkIds, current: true } },
-      { method: "PUT", path: "/lol-perks/v1/currentpage", body: 555 },
-    ]);
-  });
-
-  it("reuses the connector's own page instead of touching yours", async () => {
-    const own = { id: 103, name: "Phone: Lux", isEditable: true, primaryStyleId: 8000, subStyleId: 8100, order: 2 };
-    const s = setup([...PAGES, own], { "PUT /lol-perks/v1/pages/103": ok({}) });
-    await act("runes/recommended", body, s.ctx);
-    expect(s.lcu.writes()).toEqual([
-      { method: "PUT", path: "/lol-perks/v1/pages/103", body: { ...own, name: "Phone: Ahri", primaryStyleId: 8200, subStyleId: 8300, selectedPerkIds: REC.perkIds, current: true } },
-      { method: "PUT", path: "/lol-perks/v1/currentpage", body: 103 },
-    ]);
-  });
-
-  it("never overwrites a page when every slot is yours", async () => {
-    const full = [...PAGES, { id: 103, name: "Top", isEditable: true }];
-    const s = setup(full);
-    await expectError(act("runes/recommended", body, s.ctx), 409, /rename one to "Phone"/);
-    // League's own answer wins over counting (live client: canAddCustomPage).
-    const said = setup(PAGES, { "GET /lol-perks/v1/inventory": ok({ canAddCustomPage: false, ownedPageCount: 3 }) });
-    await expectError(act("runes/recommended", body, said.ctx), 409, /in use/);
-    expect([...s.lcu.writes(), ...said.lcu.writes()]).toHaveLength(0);
-  });
-
-  it("refuses a stale champion or index and bad input", async () => {
-    const s = setup(PAGES, {}, 99);
-    await expectError(act("runes/recommended", body, s.ctx), 409, /champion changed/);
-    const t = setup(PAGES);
-    await expectError(act("runes/recommended", { championId: 103, index: 1 }, t.ctx), 409, /anymore/);
-    await expectError(act("runes/recommended", { championId: 103, index: 9 }, t.ctx), 400, /index/);
-    await expectError(act("runes/recommended", { championId: 103, index: 0, perks: [1] }, t.ctx), 400, /unexpected/);
-    expect([...s.lcu.writes(), ...t.lcu.writes()]).toHaveLength(0);
-  });
-});
 
 describe("invitations", () => {
   const RAW = [{ invitationId: "inv-1", state: "Pending", canAcceptInvitation: true, fromSummonerId: 7 }];
@@ -298,31 +173,7 @@ describe("lobby/invite", () => {
   });
 });
 
-describe("rune recommendations", () => {
-  it("asks League with the position in capitals, and NONE without one (live client, 2026-11-13)", async () => {
-    const gets: string[] = [];
-    const session = draftSession();
-    const fake = (position: string) =>
-      ({
-        async getOrNull(p: string) {
-          gets.push(p);
-          if (p === "/lol-champ-select/v1/session") {
-            return { ...session, myTeam: session.myTeam.map((m) => (m.cellId === session.localPlayerCellId ? { ...m, championId: 103, assignedPosition: position } : m)) };
-          }
-          if (p === "/lol-gameflow/v1/session") return { gameData: { queue: { mapId: 12 } } };
-          return p.startsWith("/lol-perks/v1/recommended-pages/") ? [] : null;
-        },
-      }) as unknown as LcuHttp;
-    for (const [position, expected] of [["middle", "MIDDLE"], ["", "NONE"]] as const) {
-      const loadout = new Loadout();
-      loadout.attach(fake(position));
-      expect(await loadout.recommendations()).toEqual({ championId: 103, list: [] });
-      expect(gets.at(-1)).toBe(`/lol-perks/v1/recommended-pages/champion/103/position/${expected}/map/12`);
-    }
-  });
-});
-
-describe("store: runes and invitations", () => {
+describe("store: invitations", () => {
   afterEach(() => vi.useRealTimers());
 
   it("re-reads invitations every 5 s in case League sends no event for them", async () => {
@@ -340,11 +191,9 @@ describe("store: runes and invitations", () => {
     store.detach();
   });
 
-  it("pushes rune pages and invitations, and looks up who invited me", async () => {
+  it("pushes invitations and looks up who invited me", async () => {
     const answers: Record<string, unknown> = {
       [URI.phase]: "Lobby",
-      [URI.runePages]: PAGES,
-      [URI.currentRunePage]: PAGES[2],
       "/lol-summoner/v1/summoners/7": { gameName: "DuoPartner" },
       "/lol-game-queues/v1/queues/440": { description: "Ranked Flex" },
     };
@@ -353,7 +202,6 @@ describe("store: runes and invitations", () => {
     store.setLcuStatus("connected");
     store.attach(http);
     for (let i = 0; i < 4; i++) await tick();
-    expect(store.state.runes?.pages.find((p) => p.isCurrent)?.name).toBe("Jungle");
     expect(store.state.invitations).toEqual([]);
 
     store.handleEvent({ uri: URI.invitations, eventType: "Update", data: [{ invitationId: "x", state: "Pending", fromSummonerId: 7, gameConfig: { queueId: 440 } }] });
@@ -361,8 +209,6 @@ describe("store: runes and invitations", () => {
     for (let i = 0; i < 4; i++) await tick();
     expect(store.state.invitations[0]).toMatchObject({ from: "DuoPartner", queueName: "Ranked Flex", canAccept: true });
 
-    store.handleEvent({ uri: URI.runePages, eventType: "Update", data: PAGES.map((p) => ({ ...p, current: p.id === 101 })) });
-    expect(store.state.runes?.pages.find((p) => p.isCurrent)?.name).toBe("Mid mage");
     store.handleEvent({ uri: URI.invitations, eventType: "Delete", data: null });
     expect(store.state.invitations).toEqual([]);
   });

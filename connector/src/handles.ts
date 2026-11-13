@@ -1,5 +1,5 @@
 /**
- * Opaque handles for League objects the phone needs to point at (rune pages, invitations, friends).
+ * Opaque handles for League objects the phone needs to point at (invitations, friends).
  *
  * The phone never sees or sends an LCU id: it gets a random handle per object, the connector maps
  * it back, and the action then re-checks that object against a fresh list from the client.
@@ -8,7 +8,7 @@
 
 import { randomBytes } from "node:crypto";
 
-export type HandleKind = "page" | "invite" | "friend";
+export type HandleKind = "invite" | "friend";
 type Key = string | number;
 
 const MAX = 2000;

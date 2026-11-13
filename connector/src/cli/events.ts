@@ -66,14 +66,6 @@ function summarize(uri: string, data: unknown): string {
     case URI.pickable:
     case URI.bannable:
       return Array.isArray(data) ? `${data.length} ids` : "(not an array)";
-    case URI.runePages: {
-      if (!Array.isArray(data)) return "(not an array)";
-      const editable = data.filter((p: any) => p?.isEditable !== false).length;
-      const current = data.find((p: any) => p?.current === true);
-      return `${data.length} pages (${editable} editable), current=${current ? `#${current.id} "${current.name}"` : "none flagged"}; fields: ${Object.keys(data[0] ?? {}).join(",")}`;
-    }
-    case URI.currentRunePage:
-      return `#${d.id} "${d.name}" isEditable=${d.isEditable} isValid=${d.isValid} styles=${d.primaryStyleId}/${d.subStyleId} perks=${(d.selectedPerkIds ?? []).length}`;
     case URI.invitations:
       return Array.isArray(data)
         ? `${data.length} invitations, states=${JSON.stringify(data.map((i: any) => i?.state))}; fields: ${Object.keys(data[0] ?? {}).join(",")}`
@@ -86,10 +78,6 @@ function summarize(uri: string, data: unknown): string {
     }
     case SENT_INVITES:
       return Array.isArray(data) ? `${data.length} sent, fields: ${Object.keys(data[0] ?? {}).join(",")}` : "(not an array)";
-    case "/lol-perks/v1/styles":
-      return Array.isArray(data) ? `${data.length} rune paths (${data.map((x: any) => x?.name).join(", ")})` : "(not an array)";
-    case "/lol-perks/v1/inventory":
-      return JSON.stringify(data).slice(0, 160);
     default:
       return "";
   }
@@ -106,10 +94,6 @@ const PROBES: [string, string][] = [
   ["champ select session", URI.session],
   ["pickable champions", URI.pickable],
   ["bannable champions", URI.bannable],
-  ["rune pages", URI.runePages],
-  ["current rune page", URI.currentRunePage],
-  ["rune paths", "/lol-perks/v1/styles"],
-  ["rune page slots", "/lol-perks/v1/inventory"],
   ["received invitations", URI.invitations],
   ["sent invitations", SENT_INVITES],
   ["friends", FRIENDS],

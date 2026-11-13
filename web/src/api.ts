@@ -8,8 +8,6 @@ import type {
   ChampionSummary,
   FriendOption,
   PhoneState,
-  RecommendedRunes,
-  RuneStyleOption,
   ServerMessage,
   SkinOption,
   SpellOption,
@@ -107,8 +105,6 @@ export type ActionName =
   | "champ-select/swap/decline"
   | "champ-select/swap/request"
   | "champ-select/swap/cancel"
-  | "runes/select"
-  | "runes/recommended"
   | "invitations/accept"
   | "invitations/decline"
   | "lobby/invite";
@@ -144,17 +140,6 @@ async function getJson<T>(path: string): Promise<T> {
   return (await res.json()) as T;
 }
 
-let styles: Promise<RuneStyleOption[]> | null = null;
-/** Rune paths rarely change: fetched once per page load (retried after a failure). */
-export function fetchRuneStyles(): Promise<RuneStyleOption[]> {
-  styles ??= getJson<RuneStyleOption[]>("/api/runes/styles").catch((e) => {
-    styles = null;
-    throw e;
-  });
-  return styles;
-}
-
-export const fetchRecommendedRunes = () => getJson<RecommendedRunes[]>("/api/runes/recommended");
 export const fetchFriends = () => getJson<FriendOption[]>("/api/friends");
 
 // ---------- images: fetched with the auth header, kept as blob: URLs ----------
@@ -180,13 +165,11 @@ function runQueued<T>(job: () => Promise<T>): Promise<T> {
   });
 }
 
-export type ImageKind = "champion" | "spell" | "skin" | "style" | "perk";
+export type ImageKind = "champion" | "spell" | "skin";
 const IMAGE_PATHS: Record<ImageKind, (id: number) => string> = {
   champion: (id) => `/api/champions/${id}/icon`,
   spell: (id) => `/api/spells/${id}/image`,
   skin: (id) => `/api/skins/${id}/image`,
-  style: (id) => `/api/styles/${id}/image`,
-  perk: (id) => `/api/perks/${id}/image`,
 };
 
 export function iconUrl(id: number, kind: ImageKind = "champion"): Promise<string | null> {

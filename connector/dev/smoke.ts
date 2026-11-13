@@ -97,18 +97,6 @@ async function main() {
   const get = async <T>(p: string) => (await (await fetch(base + p, { headers: { Authorization: `Bearer ${token}` } })).json()) as T;
   const mockKey = (k: string) => mock.stdin!.write(k + "\n");
 
-  // --- runes ---
-  await waitFor("rune pages", () => state?.runes?.pages.length);
-  const pageNamed = (name: string) => state!.runes!.pages.find((p) => p.name === name);
-  check(pageNamed("Jungle")?.isCurrent && pageNamed("Precision")?.isEditable === false, "rune pages pushed (current + presets)");
-  check(!JSON.stringify(state!.runes).includes("101"), "rune page ids never reach the phone");
-  check((await act("runes/select", { page: 101 })).status === 400, "raw rune page id refused");
-  check((await act("runes/select", { page: pageNamed("Mid mage")!.handle })).status === 204, "select rune page");
-  await waitFor("page switched", () => pageNamed("Mid mage")?.isCurrent);
-  check((await get<{ name: string }[]>("/api/runes/styles")).length === 5, "rune paths listed");
-  const styleIcon = await fetch(base + "/api/styles/8200/image", { headers: { Authorization: `Bearer ${token}` } });
-  check(styleIcon.status === 200 && styleIcon.headers.get("content-type") === "image/png", "rune path icon proxied");
-
   // --- friends & invitations ---
   const friends = await get<{ handle: string; name: string; canInvite: boolean }[]>("/api/friends");
   check(friends.map((f) => f.name).join() === "DuoPartner,MidOrFeed,RankedGrinder", "only online League friends listed");
@@ -171,17 +159,6 @@ async function main() {
   check((await act("champ-select/lock")).status === 204, "lock in");
   await waitFor("locked", () => state?.champSelect?.hasLockedPick);
   check(state!.champSelect!.myTeam.find((p) => p.isMe)!.championId === choice, "my locked champion shown");
-
-  // --- recommended runes ---
-  const recs = await get<{ championId: number; index: number }[]>("/api/runes/recommended");
-  check(recs.length === 2 && recs[0]!.championId === choice, "League's recommended pages listed");
-  const pageCount = state!.runes!.pages.length;
-  check((await act("runes/recommended", { championId: choice, index: 0 })).status === 204, "apply recommended page");
-  await waitFor("phone page", () => state?.runes?.pages.find((p) => p.name.startsWith("Phone: ") && p.isCurrent));
-  check(state!.runes!.pages.length === pageCount + 1, "recommended page saved to a new page");
-  check((await act("runes/recommended", { championId: choice, index: 1 })).status === 204, "apply another recommendation");
-  check(state!.runes!.pages.length === pageCount + 1, "the connector's page is reused, not a new one");
-  check((await act("runes/recommended", { championId: choice + 1, index: 0 })).status === 409, "stale champion refused");
   await waitFor("InProgress", () => state?.phase === "InProgress", 60_000);
   check(true, "game started (InProgress)");
   mockKey("i");

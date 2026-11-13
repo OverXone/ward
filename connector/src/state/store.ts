@@ -10,7 +10,7 @@ import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
 import { Handles } from "../handles";
-import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView, RunesView } from "../shared/phone-api";
+import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
 import { deriveChampSelect, type LcuSession } from "./champ-select";
 
 export const URI = {
@@ -21,8 +21,6 @@ export const URI = {
   session: "/lol-champ-select/v1/session",
   pickable: "/lol-champ-select/v1/pickable-champion-ids",
   bannable: "/lol-champ-select/v1/bannable-champion-ids",
-  runePages: "/lol-perks/v1/pages",
-  currentRunePage: "/lol-perks/v1/currentpage",
   invitations: "/lol-lobby/v2/received-invitations",
 } as const;
 
@@ -52,19 +50,6 @@ interface RawReadyCheck {
   timer?: number;
 }
 
-/** The subset of a /lol-perks/v1/pages entry we read. */
-export interface RawRunePage {
-  id?: unknown;
-  name?: unknown;
-  isEditable?: unknown;
-  isValid?: unknown;
-  current?: unknown;
-  primaryStyleId?: unknown;
-  subStyleId?: unknown;
-  selectedPerkIds?: unknown;
-  isTemporary?: unknown;
-}
-
 /** The subset of a /lol-lobby/v2/received-invitations entry we read. */
 export interface RawInvitation {
   invitationId?: unknown;
@@ -83,8 +68,6 @@ type Raw = {
   session: LcuSession | null;
   pickable: number[] | null;
   bannable: number[] | null;
-  runePages: RawRunePage[] | null;
-  currentRunePage: RawRunePage | null;
   invitations: RawInvitation[] | null;
 };
 
@@ -96,8 +79,6 @@ const emptyRaw = (): Raw => ({
   session: null,
   pickable: null,
   bannable: null,
-  runePages: null,
-  currentRunePage: null,
   invitations: null,
 });
 
@@ -138,29 +119,6 @@ export function deriveLobby(lobby: RawLobby | null, queueName: string | null): L
 }
 
 const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
-const styleId = (v: unknown) => (isId(v) ? v : 0);
-
-/** Pages the phone can choose from. Custom pages first, then League's presets, each in the client's order. */
-export function deriveRunes(pages: RawRunePage[] | null, current: RawRunePage | null, handles: Handles): RunesView | null {
-  if (!Array.isArray(pages)) return null;
-  // Live client (2026-11-13): there's no /currentpage event, but every pages event carries `current`,
-  // so the flag wins; the /currentpage answer is only used when no page is flagged.
-  const flagged = pages.some((p) => p?.current === true);
-  const currentId = isId(current?.id) ? current.id : null;
-  const list = pages
-    .filter((p) => p && isId(p.id) && typeof p.name === "string" && p.isTemporary !== true)
-    .map((p) => ({
-      handle: handles.handle("page", p.id as number),
-      name: (p.name as string).trim().slice(0, 40) || "Rune page",
-      primaryStyleId: styleId(p.primaryStyleId),
-      subStyleId: styleId(p.subStyleId),
-      isEditable: p.isEditable !== false,
-      isValid: p.isValid !== false,
-      isCurrent: flagged ? p.current === true : p.id === currentId,
-    }));
-  return { pages: [...list.filter((p) => p.isEditable), ...list.filter((p) => !p.isEditable)] };
-}
-
 /** Pending invitations in League's order. Names and queues come from caches filled elsewhere. */
 export function deriveInvitations(
   raw: RawInvitation[] | null,
@@ -234,7 +192,7 @@ export class Store extends EventEmitter {
   private inviterNames = new Map<number, string>();
   private inviterLookups = new Set<number>();
   private invitationPoll: NodeJS.Timeout | null = null;
-  /** Opaque names the phone uses for rune pages, invitations and friends (see handles.ts). */
+  /** Opaque names the phone uses for invitations and friends (see handles.ts). */
   readonly handles = new Handles();
   state: PhoneState = this.derive();
 
@@ -385,7 +343,6 @@ export class Store extends EventEmitter {
       case "bannable":
         this.raw[key] = championIds(value);
         break;
-      case "runePages":
       case "invitations":
         this.raw[key] = Array.isArray(value) ? (value as never) : null;
         break;
@@ -472,7 +429,6 @@ export class Store extends EventEmitter {
       queue: connected ? deriveQueue(search) : null,
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
       champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable) : null,
-      runes: connected ? deriveRunes(r.runePages, r.currentRunePage, this.handles) : null,
       invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
     };
   }

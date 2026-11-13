@@ -5,13 +5,12 @@
  * validates its input, and re-checks the client's current state before acting.
  * The phone never chooses an LCU path or an action id.
  *
- * Adding a feature later (summoner spells, runes, skins, lobby) = add an entry here.
+ * Adding a feature = add an entry here.
  */
 
 import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
-import type { RuneRecommendation } from "./loadout";
 import { SWAP_KINDS, type SwapKind } from "./shared/phone-api";
 import { findHoverTarget, findMyActiveAction, findSwap, type LcuAction, type LcuSession } from "./state/champ-select";
 import { log } from "./log";
@@ -40,13 +39,12 @@ export interface ActionContext {
    * GET /bannable-champion-ids with [-1], so a connector that (re)connects mid champ select has none.
    */
   knownChampions?: () => Promise<readonly { id: number; name?: string }[] | null>;
-  /** Spells, skins and rune recommendations the client offers right now (see loadout.ts). */
+  /** Spells and skins the client says I can use right now (see loadout.ts). */
   loadout?: {
     availableSpells(): Promise<readonly { id: number }[] | null>;
     selectableSkinIds(): Promise<Set<number> | null>;
-    recommendations?(): Promise<{ championId: number; list: RuneRecommendation[] } | null>;
   };
-  /** Maps the phone's opaque handles back to rune pages, invitations and friends. */
+  /** Maps the phone's opaque handles back to invitations and friends. */
   handles?: Handles;
 }
 
@@ -262,10 +260,9 @@ function swapAction(verb: SwapVerb): ActionDef {
   };
 }
 
-// ---------- handles (rune pages, invitations, friends) ----------
+// ---------- handles (invitations, friends) ----------
 
 const HANDLE_GONE: Record<HandleKind, string> = {
-  page: "That rune page isn't there anymore",
   invite: "That invitation isn't open anymore",
   friend: "That friend isn't on your list anymore",
 };
@@ -284,42 +281,8 @@ function resolveHandle(ctx: ActionContext, kind: HandleKind, handle: string): st
   return key;
 }
 
-/** League's in-game phases: nothing here should change loadout or lobby then. */
+/** League's in-game phases: no joining another lobby then. */
 const IN_GAME = new Set(["GameStart", "InProgress", "Reconnect"]);
-
-// ---------- runes ----------
-
-const RUNE_PAGES = "/lol-perks/v1/pages";
-const CURRENT_PAGE = "/lol-perks/v1/currentpage";
-/** Pages the connector may overwrite with a recommendation: ones it made, or ones you named "Phone…". */
-const PHONE_PAGE = /^phone\b/i;
-const PAGE_NAME_MAX = 25;
-
-interface LcuRunePage {
-  id: number;
-  name?: unknown;
-  isEditable?: unknown;
-  isTemporary?: unknown;
-  [k: string]: unknown;
-}
-
-async function runePages(http: LcuHttp): Promise<LcuRunePage[]> {
-  const pages = await http.getOrNull<LcuRunePage[]>(RUNE_PAGES);
-  if (!Array.isArray(pages)) throw new ActionError(503, "Couldn't read your rune pages from League");
-  return pages.filter((p) => p && Number.isInteger(p.id) && p.id > 0);
-}
-
-async function setCurrentPage(http: LcuHttp, id: number): Promise<void> {
-  if ((await call(http, "PUT", CURRENT_PAGE, id)) === 404) throw new ActionError(502, "This League client can't switch rune pages from here. Use your PC.");
-}
-
-function recommendationInput(input: Input): { championId: number; index: number } {
-  const index = input.index;
-  if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 5) throw new ActionError(400, "index must be 0-5");
-  return { championId: championIdFrom(input), index };
-}
-
-const isEditablePage = (p: LcuRunePage) => p.isEditable !== false && p.isTemporary !== true;
 
 // ---------- the whitelist ----------
 
@@ -415,63 +378,6 @@ const ACTIONS = {
       const ids = await ctx.loadout?.selectableSkinIds();
       if (!ids?.has(skinId)) throw new ActionError(400, "You can't use that skin right now");
       if ((await call(http, "PATCH", MY_SELECTION, { selectedSkinId: skinId })) === 404) throw new ActionError(409, "Not in champion select");
-    },
-  },
-  "runes/select": {
-    keys: ["page"],
-    validate: (input) => void handleFrom(input, "page"),
-    async run(input, http, ctx) {
-      const id = resolveHandle(ctx, "page", handleFrom(input, "page"));
-      if (IN_GAME.has((await getPhase(http)) ?? "")) throw new ActionError(409, "Runes can't change during a game");
-      const page = (await runePages(http)).find((p) => p.id === id);
-      if (!page) throw new ActionError(409, HANDLE_GONE.page);
-      await setCurrentPage(http, page.id);
-    },
-  },
-  "runes/recommended": {
-    keys: ["championId", "index"],
-    validate: (input) => void recommendationInput(input),
-    async run(input, http, ctx) {
-      const { championId, index } = recommendationInput(input);
-      await assertInChampSelect(http);
-      const rec = await ctx.loadout?.recommendations?.();
-      if (!rec) throw new ActionError(409, "Pick or hover a champion first");
-      if (rec.championId !== championId) throw new ActionError(409, "Your champion changed. Open the runes again.");
-      const r = rec.list[index];
-      if (!r) throw new ActionError(409, "League doesn't recommend that page anymore");
-
-      const champ = (await ctx.knownChampions?.())?.find((c) => c.id === championId)?.name ?? "recommended";
-      const page = {
-        name: `Phone: ${champ}`.slice(0, PAGE_NAME_MAX),
-        primaryStyleId: r.primaryStyleId,
-        subStyleId: r.subStyleId,
-        selectedPerkIds: r.perkIds,
-        current: true,
-      };
-      const pages = await runePages(http);
-      // Only ever overwrite a page that's the connector's (or that you named "Phone…" for it).
-      const own = pages.find((p) => isEditablePage(p) && typeof p.name === "string" && PHONE_PAGE.test(p.name));
-      if (own) {
-        if ((await call(http, "PUT", `${RUNE_PAGES}/${own.id}`, { ...own, ...page })) === 404) throw new ActionError(409, HANDLE_GONE.page);
-        await setCurrentPage(http, own.id);
-        return;
-      }
-      // Live client (2026-11-13): {"canAddCustomPage":true,"customPageCount":1,"ownedPageCount":3,...}
-      const inventory = await http.getOrNull<{ canAddCustomPage?: unknown; ownedPageCount?: unknown }>("/lol-perks/v1/inventory");
-      const owned = inventory?.ownedPageCount;
-      const full =
-        typeof inventory?.canAddCustomPage === "boolean"
-          ? !inventory.canAddCustomPage
-          : Number.isInteger(owned) && pages.filter(isEditablePage).length >= (owned as number);
-      if (full) {
-        throw new ActionError(409, 'All your rune pages are in use. On your PC, delete one or rename one to "Phone" and the connector will use that one.');
-      }
-      const created = await http.json<{ id?: unknown }>("POST", RUNE_PAGES, page);
-      if (created.status < 200 || created.status >= 300) {
-        throw new ActionError(502, friendlyLcuError(lcuErrorMessage(Buffer.from(JSON.stringify(created.data ?? {})))) ?? `League client refused (${created.status})`);
-      }
-      const id = created.data?.id;
-      if (Number.isInteger(id) && (id as number) > 0) await setCurrentPage(http, id as number);
     },
   },
   "invitations/accept": invitationAction("accept"),

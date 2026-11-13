@@ -120,42 +120,6 @@ export interface SkinOption {
   chromas: { id: number; name: string; color: string | null }[];
 }
 
-/** One of my rune pages. `handle` is an opaque per-run name for it, never the client's page id. */
-export interface RunePageView {
-  handle: string;
-  name: string;
-  primaryStyleId: number;
-  subStyleId: number;
-  /** false for League's preset pages. */
-  isEditable: boolean;
-  /** false when the page isn't complete. */
-  isValid: boolean;
-  isCurrent: boolean;
-}
-
-export interface RunesView {
-  pages: RunePageView[];
-}
-
-/** A rune path (Precision, Domination, ...) for labels and icons (GET /api/runes/styles). */
-export interface RuneStyleOption {
-  id: number;
-  name: string;
-}
-
-/** A rune page League recommends for my champion (GET /api/runes/recommended). */
-export interface RecommendedRunes {
-  championId: number;
-  /** Position in League's list; sent back with the champion id to apply it. */
-  index: number;
-  primaryStyleId: number;
-  subStyleId: number;
-  keystoneId: number;
-  keystoneName: string;
-  /** Role it's made for: "top" | "jungle" | "middle" | "bottom" | "utility" | "". */
-  position: string;
-}
-
 /** A lobby invitation someone sent me. */
 export interface InvitationView {
   handle: string;
@@ -181,7 +145,6 @@ export interface PhoneState {
   queue: QueueView | null;
   readyCheck: ReadyCheckView | null;
   champSelect: ChampSelectView | null;
-  runes: RunesView | null;
   invitations: InvitationView[];
 }
 

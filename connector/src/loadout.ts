@@ -6,42 +6,13 @@
  * - /lol-summoner/v1/current-summoner + /lol-collections/v1/inventories/{summonerId}/spells   spells I own
  * - /lol-gameflow/v1/session   the current game mode (only `gameData.queue.gameMode` is read)
  * - /lol-champ-select/v1/skin-carousel-skins   skins (with chromas) for my champion, with `unlocked`
- * - /lol-perks/v1/styles   rune paths (id, name, iconPath)
- * - /lol-perks/v1/recommended-pages/champion/{id}/position/{pos}/map/{map}   League's suggested pages
  *
  * Images are only ever fetched from paths the client itself listed for an id we validated, and only
  * under /lol-game-data/assets/, so this can't be used to read anything else from the client.
  */
 
 import type { LcuHttp } from "./lcu/http";
-import type { RecommendedRunes, RuneStyleOption, SkinOption, SpellOption } from "./shared/phone-api";
-
-export type ImageKind = "spell" | "skin" | "style" | "perk";
-
-/** A recommended page, parsed: everything needed to write it into a rune page. */
-export interface RuneRecommendation {
-  primaryStyleId: number;
-  subStyleId: number;
-  perkIds: number[];
-  keystoneId: number;
-  keystoneName: string;
-  /** Lowercase role League made it for ("middle", "utility", ...), or "". */
-  position: string;
-}
-
-interface RawRecommendation {
-  position?: unknown;
-  primaryPerkStyleId?: unknown;
-  secondaryPerkStyleId?: unknown;
-  primaryStyleId?: unknown;
-  subStyleId?: unknown;
-  perks?: { id?: unknown; name?: unknown; iconPath?: unknown }[];
-  perkIds?: unknown;
-  keystone?: { id?: unknown; name?: unknown; iconPath?: unknown };
-}
-
-/** A full page is 4 primary runes, 2 secondary runes and 3 shards. */
-const PAGE_PERKS = 9;
+import type { SkinOption, SpellOption } from "./shared/phone-api";
 
 const SPELLS_PATH = "/lol-game-data/assets/v1/summoner-spells.json";
 const CAROUSEL_PATH = "/lol-champ-select/v1/skin-carousel-skins";
@@ -79,12 +50,10 @@ export class Loadout {
   /** id -> image path, filled from lists we fetched (spells and skins). */
   private imagePaths = new Map<string, string>();
   private images = new Map<string, Buffer>();
-  private styles: RuneStyleOption[] | null = null;
 
   attach(http: LcuHttp | null): void {
     this.http = http;
     this.spells = null;
-    this.styles = null;
     this.imagePaths.clear();
     this.images.clear();
   }
@@ -157,88 +126,15 @@ export class Loadout {
     return new Set(skins.flatMap((s) => [s.id, ...s.chromas.map((c) => c.id)]));
   }
 
-  /** Rune paths, for names and icons on the phone. */
-  async runeStyles(): Promise<RuneStyleOption[] | null> {
-    if (this.styles) return this.styles;
-    const http = this.http;
-    const raw = http ? await http.getOrNull<{ id?: unknown; name?: unknown; iconPath?: unknown }[]>("/lol-perks/v1/styles") : null;
-    if (!Array.isArray(raw) || http !== this.http) return null;
-    this.styles = raw
-      .filter((s) => isId(s.id) && typeof s.name === "string")
-      .map((s) => {
-        const icon = assetPath(s.iconPath);
-        if (icon) this.imagePaths.set(`style:${s.id as number}`, icon);
-        return { id: s.id as number, name: text(s.name, 30) };
-      });
-    return this.styles;
-  }
-
-  /**
-   * League's recommended pages for the champion I've picked or am hovering, in my assigned position
-   * on this map. null = not in champ select or no champion yet; [] = League has none to offer.
-   */
-  async recommendations(): Promise<{ championId: number; list: RuneRecommendation[] } | null> {
-    const http = this.http;
-    if (!http) return null;
-    const [session, flow] = await Promise.all([
-      http.getOrNull<{ localPlayerCellId?: unknown; myTeam?: { cellId?: unknown; championId?: unknown; championPickIntent?: unknown; assignedPosition?: unknown }[] }>(
-        "/lol-champ-select/v1/session",
-      ),
-      http.getOrNull<{ gameData?: { queue?: { mapId?: unknown } } }>("/lol-gameflow/v1/session"),
-    ]);
-    const me = Array.isArray(session?.myTeam) ? session.myTeam.find((m) => m?.cellId === session.localPlayerCellId) : undefined;
-    if (!me) return null;
-    const championId = isId(me.championId) ? me.championId : isId(me.championPickIntent) ? me.championPickIntent : 0;
-    if (!championId) return null;
-    const mapId = isId(flow?.gameData?.queue?.mapId) ? flow.gameData.queue.mapId : 11;
-    // Live client (2026-11-13): League wants MIDDLE/UTILITY/...; anything else (lowercase too) silently
-    // gets the champion's default role, which is also what NONE (blind pick, ARAM) is meant to give.
-    const assigned = typeof me.assignedPosition === "string" && /^[a-z]{1,16}$/i.test(me.assignedPosition) ? me.assignedPosition.toUpperCase() : "";
-    const raw = await http.getOrNull<RawRecommendation[]>(`/lol-perks/v1/recommended-pages/champion/${championId}/position/${assigned || "NONE"}/map/${mapId}`);
-    if (http !== this.http) return null;
-    const list = Array.isArray(raw) ? raw.slice(0, 6).map((r) => this.parseRecommendation(r)).filter((r): r is RuneRecommendation => !!r) : [];
-    return { championId, list };
-  }
-
-  private parseRecommendation(r: RawRecommendation): RuneRecommendation | null {
-    const primaryStyleId = [r.primaryPerkStyleId, r.primaryStyleId].find(isId);
-    const subStyleId = [r.secondaryPerkStyleId, r.subStyleId].find(isId);
-    const perkIds = Array.isArray(r.perks) ? r.perks.map((p) => p?.id) : Array.isArray(r.perkIds) ? r.perkIds : [];
-    if (!primaryStyleId || !subStyleId || perkIds.length !== PAGE_PERKS || !perkIds.every(isId)) return null;
-    const keystone = r.keystone && isId(r.keystone.id) ? r.keystone : r.perks?.[0];
-    const keystoneId = isId(keystone?.id) ? keystone.id : (perkIds[0] as number);
-    const icon = assetPath(keystone?.iconPath);
-    if (icon) this.imagePaths.set(`perk:${keystoneId}`, icon);
-    const position = typeof r.position === "string" && /^[A-Z]{1,16}$/i.test(r.position) ? r.position.toLowerCase() : "";
-    return { primaryStyleId, subStyleId, perkIds: perkIds as number[], keystoneId, keystoneName: text(keystone?.name, 40), position };
-  }
-
-  /** The recommendations as the phone sees them. */
-  async recommendedRunes(): Promise<RecommendedRunes[] | null> {
-    const rec = await this.recommendations();
-    if (!rec) return null;
-    return rec.list.map((r, index) => ({
-      championId: rec.championId,
-      index,
-      primaryStyleId: r.primaryStyleId,
-      subStyleId: r.subStyleId,
-      keystoneId: r.keystoneId,
-      keystoneName: r.keystoneName,
-      position: r.position,
-    }));
-  }
-
-  /** Image bytes for a spell, skin, rune path or keystone id we listed before, or null. */
-  async image(kind: ImageKind, id: number): Promise<{ type: string; body: Buffer } | null> {
+  /** Image bytes for a spell or skin id we listed before, or null. */
+  async image(kind: "spell" | "skin", id: number): Promise<{ type: string; body: Buffer } | null> {
     if (!isId(id)) return null;
     const key = `${kind}:${id}`;
     let path = this.imagePaths.get(key);
     if (!path) {
       // Not listed yet (e.g. the phone asked for an icon before opening the list): list now.
       if (kind === "spell") await this.availableSpells();
-      else if (kind === "skin") await this.availableSkins();
-      else if (kind === "style") await this.runeStyles();
-      else await this.recommendations();
+      else await this.availableSkins();
       path = this.imagePaths.get(key);
     }
     const http = this.http;

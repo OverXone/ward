@@ -6,7 +6,6 @@ Control your League of Legends client from your phone over your home Wi-Fi. From
 - hover, ban and lock in champions
 - accept, decline or ask for role swaps, pick-order swaps and champion trades
 - choose your summoner spells, skin and chroma
-- choose your rune page, or apply the page League recommends for your champion
 - join or decline lobby invitations, and invite online friends to your lobby
 
 There's no cloud and no accounts. Everything stays on your local network.
@@ -28,7 +27,7 @@ Good to know:
 - **Favorite champions:** long-press a champion in the grid to star it. When you're picking, starred champions come first.
 - **Swaps:** a teammate's swap request pops up with Accept and Decline. To ask someone, tap a teammate with the ⇄ badge.
 - **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own.
-- **Runes:** the **Runes** button (in the lobby and in champ select) switches your active page. In champ select it also offers League's recommended pages for your champion. A recommendation is saved to a page named **"Phone: <champion>"**: the connector creates it if you have a free page slot and reuses it afterwards. It never changes your other pages. If every slot is taken, rename one of your pages to start with "Phone" and the connector will use that one.
+- **Runes** aren't on the phone (Mobalytics or the PC client handle them). The last version that had a rune page picker is tagged `with-runes` in git.
 - **Invitations:** when someone invites you, a card with **Join** and **Decline** appears on every screen. In your lobby, **Invite friends** lists friends who are online in League.
 - **Don't show the window on stream or screen share.** The QR code is your phone's login key for that session.
 
@@ -61,7 +60,7 @@ npm run smoke          # end-to-end against the mock League client
 npm run events               # prints discovery, probes every endpoint, then live events
 npm run events -- --dump     # also saves events to lcu-events-*.jsonl (ids, names, chat creds scrubbed)
 npm run events -- --all      # also lists every other LCU event URI
-npm run api-list -- lol-perks received-invitations   # endpoints + types from the client's own API list (GET /help)
+npm run api-list -- received-invitations lol-chat/v1/friends   # endpoints + types from the client's own API list (GET /help)
 npm run api-list -- --save   # also saves the whole list to lcu-help.json (gitignored)
 ```
 
@@ -121,7 +120,7 @@ Keys in the mock window:
 
 - **New 32-byte token every launch.** The phone gets it through the QR code or a one-time pairing code, then sends it on every API call and in the first websocket frame. Comparisons are constant-time. After 10 failed attempts, that IP is locked out for 60 s.
 - **LAN only.** The connector listens on one private LAN IPv4 address, never `0.0.0.0`, and rejects any client whose IP isn't private (10/8, 172.16/12, 192.168/16). The `Host` and `Origin` checks block DNS rebinding.
-- **Not a proxy.** The phone can trigger only these actions: accept, decline, start queue, cancel queue, hover, lock, set spells, set skin, accept/decline/request/cancel a swap, choose a rune page, apply a recommended rune page, accept/decline an invitation and invite a friend. Inputs are validated against the client's own current lists (pickable or bannable champions, spells for this mode that you own, skins you've unlocked, your rune pages, pending invitations, online friends). The connector decides which champ-select action or swap is yours; the phone never sends an action or swap id. Rune pages, invitations and friends reach the phone as random per-launch handles, never as League ids, and every handle is checked against a fresh list from the client before anything is sent.
+- **Not a proxy.** The phone can trigger only these actions: accept, decline, start queue, cancel queue, hover, lock, set spells, set skin, accept/decline/request/cancel a swap, accept/decline an invitation and invite a friend. Inputs are validated against the client's own current lists (pickable or bannable champions, spells for this mode that you own, skins you've unlocked, pending invitations, online friends). The connector decides which champ-select action or swap is yours; the phone never sends an action or swap id. Invitations and friends reach the phone as random per-launch handles, never as League ids, and every handle is checked against a fresh list from the client before anything is sent.
 - **TLS verification is skipped for 127.0.0.1 only.** It's turned off on one HTTPS agent that only talks to the local League client. It's never turned off globally.
 - **No secrets in the console.** The token and the League client password are never printed. The token only appears encoded inside the QR code.
 - **Plain HTTP on your LAN.** That's fine on your own home Wi-Fi. Don't use it on public or shared Wi-Fi.

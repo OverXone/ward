@@ -1,11 +1,10 @@
 <script setup lang="ts">
-import type { LobbyView, RunesView } from "@shared/phone-api";
+import type { LobbyView } from "@shared/phone-api";
 import { computed, ref } from "vue";
 import FriendsSheet from "../components/FriendsSheet.vue";
-import RunesButton from "../components/RunesButton.vue";
 import { run } from "../store";
 
-const props = defineProps<{ lobby: LobbyView | null; runes: RunesView | null }>();
+const props = defineProps<{ lobby: LobbyView | null }>();
 const busy = ref(false);
 const inviting = ref(false);
 
@@ -32,7 +31,6 @@ async function startQueue() {
     </div>
     <div class="tools">
       <button v-if="lobby?.canInvite" class="btn btn-ghost invite" @click="inviting = true">Invite friends</button>
-      <RunesButton v-if="runes" :runes="runes" />
     </div>
     <div class="actions">
       <p v-if="blocker" class="blocker">{{ blocker }}</p>
