@@ -193,6 +193,33 @@ describe("champ select", () => {
     await expectError(runAction("champ-select/hover", { championId: 222 }, { http: lcu.http, lists }), 400, /banned/);
   });
 
+  it("bans after joining mid champ select: GET answers [-1] and nothing was pushed (2026-11-13)", async () => {
+    const s = advanceTo(draftSession(), 0);
+    const myBan = s.actions[0]!.find((a) => a.actorCellId === 2)!;
+    const lcu = csLcu(s, {
+      "GET /lol-champ-select/v1/bannable-champion-ids": ok([-1]),
+      [`PATCH /lol-champ-select/v1/session/actions/${myBan.id}`]: ok(),
+    });
+    const lists = () => ({ pickable: [], bannable: [] });
+    const knownChampions = async () => [{ id: 51 }, { id: 157 }, { id: 60051 }];
+    const ctx = { http: lcu.http, lists, knownChampions };
+
+    await runAction("champ-select/hover", { championId: 51 }, ctx);
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${myBan.id}`, body: { championId: 51 } }]);
+    // Still only real champions: not a special-mode copy, not an unknown id.
+    await expectError(runAction("champ-select/hover", { championId: 60051 }, ctx), 400, /banned/);
+    await expectError(runAction("champ-select/hover", { championId: 999 }, ctx), 400, /banned/);
+    // And nothing at all if the champion list isn't available either.
+    await expectError(runAction("champ-select/hover", { championId: 51 }, { ...ctx, knownChampions: async () => null }), 400);
+  });
+
+  it("uses the fallback only when League gave no list", async () => {
+    const s = advanceTo(draftSession(), 0);
+    const lcu = csLcu(s); // GET bannable = [157, 103]
+    const knownChampions = async () => [{ id: 51 }];
+    await expectError(runAction("champ-select/hover", { championId: 51 }, { http: lcu.http, knownChampions }), 400, /banned/);
+  });
+
   it("re-validates the hovered champion before locking", async () => {
     const s = advanceTo(draftSession(), 4);
     s.actions[4]!.find((a) => a.actorCellId === 2)!.championId = 1; // not in pickable list anymore

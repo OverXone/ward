@@ -157,7 +157,11 @@ export function createRequestHandler(deps: ServerDeps) {
       if (!isActionName(name)) return sendError(res, 404, "not found");
       const body = await readJsonBody(req);
       try {
-        await runAction(name, body, { http: deps.getLcu(), lists: () => deps.store.championLists() });
+        await runAction(name, body, {
+          http: deps.getLcu(),
+          lists: () => deps.store.championLists(),
+          knownChampions: () => deps.champions.list(),
+        });
       } catch (e) {
         if (e instanceof ActionError) {
           log.info(`Action ${name} rejected: ${e.message}`);

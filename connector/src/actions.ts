@@ -30,6 +30,12 @@ export interface ActionContext {
    * event carried all 174 ids, so validation accepts an id if either source lists it.
    */
   lists?: () => { pickable: readonly number[]; bannable: readonly number[] };
+  /**
+   * Every real champion id, from the client's champion summary. Only used when League has given
+   * no usable list at all: League pushes the lists once, at the start of champ select, and answers
+   * GET /bannable-champion-ids with [-1], so a connector that (re)connects mid champ select has none.
+   */
+  knownChampions?: () => Promise<readonly { id: number }[] | null>;
 }
 
 type Input = Record<string, unknown>;
@@ -105,7 +111,22 @@ async function getSession(http: LcuHttp): Promise<LcuSession> {
 async function allowedChampions(http: LcuHttp, ctx: ActionContext, type: string): Promise<Set<number>> {
   const ids = championIds(await http.getOrNull(type === "ban" ? URI.bannable : URI.pickable)) ?? [];
   const pushed = ctx.lists?.()[type === "ban" ? "bannable" : "pickable"] ?? [];
-  return new Set([...ids, ...pushed].filter((n) => Number.isInteger(n) && n > 0));
+  const allowed = new Set([...ids, ...pushed].filter((n) => Number.isInteger(n) && n > 0));
+  if (allowed.size || !ctx.knownChampions) return allowed;
+
+  // No list from League: accept any real champion and let League refuse what it won't allow
+  // (its error is shown on the phone). Ids from 10000 up are special-mode copies (e.g. 60051).
+  const known = (await ctx.knownChampions()) ?? [];
+  const fallback = new Set(known.map((c) => c.id).filter((n) => Number.isInteger(n) && n > 0 && n < 10_000));
+  if (fallback.size) noteFallback(type);
+  return fallback;
+}
+
+let fallbackLoggedAt = 0;
+function noteFallback(type: string): void {
+  if (Date.now() - fallbackLoggedAt < 60_000) return;
+  fallbackLoggedAt = Date.now();
+  log.info(`League gave no ${type} list (connector joined mid champ select?); letting League check the champion`);
 }
 
 async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number): Promise<void> {
