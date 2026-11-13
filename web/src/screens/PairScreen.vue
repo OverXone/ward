@@ -39,7 +39,7 @@ async function submit() {
     <div class="center">
       <div class="logo" aria-hidden="true"></div>
       <h1 class="title">Connect to your PC</h1>
-      <p class="sub">Scan the QR code in the Ward window with your camera, or type the code it shows.</p>
+      <p class="sub">Scan the QR code in the Ward window with your camera, or type the code it shows. You only need to do this once.</p>
 
       <form class="pair card" @submit.prevent="submit">
         <label for="code">Pairing code</label>
@@ -61,17 +61,16 @@ async function submit() {
         </button>
       </form>
 
-      <p class="hint">Phone and PC must be on the same Wi-Fi. The code works once; press Enter in the connector window for a new one.</p>
+      <p class="hint">Phone and PC must be on the same Wi-Fi. The code works once; press Enter in the Ward window for a new one.</p>
 
       <aside v-if="!standalone" class="tip card">
         <strong>Tip: put it on your home screen</strong>
         <span v-if="ios">
-          In Safari tap <b>Share</b>, then <b>Add to Home Screen</b>. Open it from the icon and type the code there: the icon
-          doesn't share Safari's login, so a QR scan pairs Safari, not the icon.
+          In Safari tap <b>Share</b>, then <b>Add to Home Screen</b>. Open it from the icon and type the code there once: the
+          icon doesn't share Safari's login, so a QR scan pairs Safari, not the icon.
         </span>
         <span v-else>
-          Open the browser menu (<b>⋮</b>) and choose <b>Add to Home screen</b>, so it opens like an app. After each
-          connector restart, pair again from the icon.
+          Open the browser menu (<b>⋮</b>) and choose <b>Add to Home screen</b>, so it opens like an app.
         </span>
       </aside>
     </div>

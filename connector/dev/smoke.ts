@@ -4,11 +4,13 @@
  * Spawns the mock client and the real connector, pairs via the API like a
  * phone would, plays through lobby → queue → ready check → ban → pick → game,
  * checks that no secret reaches the connector's output, then kills and
- * restarts the mock to verify reconnect.
+ * restarts the mock to verify reconnect, and restarts the connector to check
+ * the phone stays paired. Remembered phones go to a temp folder, not %APPDATA%.
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import WebSocket from "ws";
 import type { PhoneState } from "../src/shared/phone-api";
@@ -17,6 +19,8 @@ const PORT = 47899;
 const root = path.resolve(__dirname, "..");
 let out = "";
 let state: PhoneState | null = null;
+const dataDir = mkdtempSync(path.join(os.tmpdir(), "ward-smoke-"));
+process.env.WARD_DATA_DIR = dataDir; // inherited by the connector
 
 function start(file: string, args: string[] = [], onLine?: (l: string) => void): ChildProcess {
   const p = spawn(process.execPath, ["--import", "tsx", file, ...args], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
@@ -62,7 +66,8 @@ async function main() {
   const lcuPassword = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
 
   // --- connector ---
-  const conn = start("src/main.ts", ["--league-dir", dir, "--port", String(PORT)], (l) => (out += l + "\n"));
+  const connArgs = ["--league-dir", dir, "--port", String(PORT)];
+  const conn = start("src/main.ts", connArgs, (l) => (out += l + "\n"));
   const code = await waitFor("pairing code", () => /enter code:\s+([0-9A-Z]{4}-[0-9A-Z]{4})/.exec(out)?.[1]);
   const base = await waitFor("base url", () => /Or open\s+(http:\/\/[\d.]+:\d+)/.exec(out)?.[1]);
   const host = base.replace("http://", "");
@@ -176,13 +181,25 @@ async function main() {
   check(true, "reconnected after client restart");
   const lcuPassword2 = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
 
+  // --- the phone stays paired when Ward restarts ---
+  ws.close();
+  const exited = new Promise((r) => conn.once("exit", r));
+  conn.kill();
+  await exited;
+  const from = out.length;
+  const conn2 = start("src/main.ts", connArgs, (l) => (out += l + "\n"));
+  await waitFor("connector restarted", () => out.slice(from).includes("enter code:"));
+  check(/Remembered phones[\s\S]*1\. /.test(out.slice(from)), "window lists the remembered phone");
+  const again = await fetch(base + "/api/state", { headers: { Authorization: `Bearer ${token}` } });
+  check(again.status === 200, "phone key still works after restarting Ward");
+
   // --- secrets never printed ---
-  check(!out.includes(token), "session token never printed as text");
+  check(!out.includes(token), "phone key never printed as text");
   check(!out.includes(lcuPassword) && !out.includes(lcuPassword2), "LCU passwords never printed");
 
-  ws.close();
-  conn.kill();
+  conn2.kill();
   mock.kill();
+  rmSync(dataDir, { recursive: true, force: true });
   console.log("\nSMOKE TEST PASSED");
   process.exit(0);
 }

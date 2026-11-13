@@ -1,6 +1,6 @@
 /**
  * LAN HTTP server: the phone UI shell (public, contains no secrets) plus the
- * token-protected /api routes. No CORS headers, no cookies, no generic proxying.
+ * /api routes, which need the key a phone got when it paired. No CORS headers, no cookies, no generic proxying.
  */
 
 import http from "node:http";
@@ -9,17 +9,20 @@ import type { Champions } from "../champions";
 import { listFriends } from "../friends";
 import type { Loadout } from "../loadout";
 import type { LcuHttp } from "../lcu/http";
-import { log } from "../log";
 import type { Store } from "../state/store";
 import type { StaticFiles } from "./assets";
-import { bearerToken, safeEqual, type FailureLimiter, type Pairing } from "./auth";
+import { addSecret, log } from "../log";
+import { bearerToken, type FailureLimiter, type Pairing } from "./auth";
+import { phoneName, type Devices, type Phone } from "./devices";
 import { isPrivateIPv4, normalizeRemote } from "./net";
 
 export interface ServerDeps {
   host: string;
   port: number;
-  token: string;
+  devices: Devices;
   pairing: Pairing;
+  /** Called after a phone pairs (to tell the user in the Ward window). */
+  onPaired?: (phone: Phone, via: "qr" | "code") => void;
   limiter: FailureLimiter;
   champions: Champions;
   loadout: Loadout;
@@ -118,25 +121,48 @@ export function createRequestHandler(deps: ServerDeps) {
   async function api(req: http.IncomingMessage, res: http.ServerResponse, path: string, ip: string): Promise<void> {
     if (deps.limiter.isLocked(ip)) return sendError(res, 429, "Too many failed attempts, wait a minute");
 
-    // Pairing: the only unauthenticated API route.
+    // Pairing: the only unauthenticated API route. A QR ticket or a typed code buys a key for this phone.
     if (path === "/api/pair") {
       if (req.method !== "POST") return sendError(res, 405, "method not allowed");
-      const body = (await readJsonBody(req)) as { code?: unknown } | undefined;
-      if (body && typeof body === "object" && deps.pairing.redeem(body.code)) {
+      const body = (await readJsonBody(req)) as { code?: unknown; ticket?: unknown; previous?: unknown } | undefined;
+      const viaQr = !!body && typeof body === "object" && body.ticket !== undefined;
+      const ok = !!body && typeof body === "object" && (viaQr ? deps.pairing.redeemTicket(body.ticket) : deps.pairing.redeem(body.code));
+      if (ok) {
         deps.limiter.succeed(ip);
-        log.info(`Phone paired with code from ${ip}`);
-        return sendJson(res, 200, { token: deps.token });
+        const name = phoneName(req.headers["user-agent"]);
+        const { id, key } = deps.devices.add(name, body.previous);
+        addSecret(key);
+        log.info(`Phone paired with ${viaQr ? "the QR code" : "a code"} from ${ip} (${name})`);
+        const phone = deps.devices.list().find((p) => p.id === id);
+        if (phone) deps.onPaired?.(phone, viaQr ? "qr" : "code");
+        return sendJson(res, 200, { token: key });
       }
       deps.limiter.fail(ip);
-      return sendError(res, 401, "Wrong or expired code. Press Enter in the connector window for a new one.");
+      return sendError(
+        res,
+        401,
+        viaQr
+          ? "This QR code was already used. Press Enter in the Ward window for a new one."
+          : "Wrong or expired code. Press Enter in the Ward window for a new one.",
+      );
     }
 
-    const token = bearerToken(req.headers.authorization);
-    if (!token || !safeEqual(token, deps.token)) {
+    const phone = deps.devices.verify(bearerToken(req.headers.authorization));
+    if (!phone) {
       deps.limiter.fail(ip);
       return sendError(res, 401, "unauthorized");
     }
     deps.limiter.succeed(ip);
+
+    // The phone's "Unpair" button: forget this phone's key.
+    if (path === "/api/forget") {
+      if (req.method !== "POST") return sendError(res, 405, "method not allowed");
+      deps.devices.remove(phone.id);
+      log.info(`Phone unpaired itself: ${phone.name}`);
+      res.writeHead(204, { "Cache-Control": "no-store" });
+      res.end();
+      return;
+    }
 
     if (req.method === "GET") {
       if (path === "/api/state") return sendJson(res, 200, deps.store.state);

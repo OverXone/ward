@@ -7,7 +7,7 @@ import PairScreen from "./screens/PairScreen.vue";
 import QueueScreen from "./screens/QueueScreen.vue";
 import ReadyCheckScreen from "./screens/ReadyCheckScreen.vue";
 import StatusScreen from "./screens/StatusScreen.vue";
-import { app } from "./store";
+import { app, unpairPhone } from "./store";
 
 type View =
   | { kind: "pair" }
@@ -18,9 +18,10 @@ type View =
   | { kind: "champ" };
 
 const view = computed<View>(() => {
+  if (app.pairing) return { kind: "status", title: "Signing in…", spinner: true };
   if (!app.paired) return { kind: "pair" };
   const s = app.state;
-  if (!s) return { kind: "status", title: "Connecting to your PC…", sub: "Make sure Ward is running and you're on the same Wi-Fi.", spinner: true };
+  if (!s) return { kind: "status", title: "Connecting to your PC…", sub: "Make sure Ward is running and you're on the same Wi-Fi. If the Ward window says the PC's address changed, scan its QR code.", spinner: true };
   if (s.lcu !== "connected")
     return { kind: "status", title: "Waiting for League", sub: "Start the League of Legends client on your PC.", spinner: true };
   if (s.readyCheck?.state === "InProgress") return { kind: "ready" };
@@ -51,6 +52,11 @@ const view = computed<View>(() => {
 });
 
 const reconnecting = computed(() => app.paired && app.state && app.socket !== "open");
+
+// Offered on the calm status screens (not mid champ select), where a stray tap can't cost anything.
+async function unpair() {
+  if (window.confirm("Unpair this phone? The PC forgets it, and you'll need to scan the QR code or enter a code again.")) await unpairPhone();
+}
 </script>
 
 <template>
@@ -61,7 +67,9 @@ const reconnecting = computed(() => app.paired && app.state && app.socket !== "o
     :phase="app.state.phase"
   />
   <PairScreen v-if="view.kind === 'pair'" />
-  <StatusScreen v-else-if="view.kind === 'status'" :title="view.title" :sub="view.sub" :spinner="view.spinner" :emoji="view.emoji" />
+  <StatusScreen v-else-if="view.kind === 'status'" :title="view.title" :sub="view.sub" :spinner="view.spinner" :emoji="view.emoji">
+    <button v-if="app.paired && !app.pairing" class="unpair" type="button" @click="unpair">Unpair this phone</button>
+  </StatusScreen>
   <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" />
   <QueueScreen v-else-if="view.kind === 'queue'" :queue="app.state!.queue" :queue-name="app.state!.lobby?.queueName ?? null" />
   <ReadyCheckScreen v-else-if="view.kind === 'ready'" :ready-check="app.state!.readyCheck!" />
@@ -72,6 +80,16 @@ const reconnecting = computed(() => app.paired && app.state && app.socket !== "o
 </template>
 
 <style>
+.unpair {
+  margin-top: 28px;
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+}
 .banner {
   position: sticky;
   top: 0;

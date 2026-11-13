@@ -1,5 +1,6 @@
 /**
- * Session token, one-time pairing codes and per-IP failure lockout.
+ * Key generation, one-time pairing codes and QR tickets, and per-IP failure lockout.
+ * The keys phones keep after pairing live in devices.ts.
  */
 
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
@@ -76,6 +77,28 @@ export class Pairing {
 
   get active(): boolean {
     return this.code !== null && this.now() < this.expiresAt && this.attemptsLeft > 0;
+  }
+
+  // ---- QR ticket: a 32-byte secret in the QR link. Single use, valid until used or replaced. ----
+  // It's 256 random bits, so it needs no expiry or attempt limit (the per-IP limiter still applies).
+  private ticket: string | null = null;
+
+  /** Creates a fresh QR ticket (replacing any previous one). */
+  issueTicket(): string {
+    this.ticket = generateToken();
+    return this.ticket;
+  }
+
+  get ticketActive(): boolean {
+    return this.ticket !== null;
+  }
+
+  /** True exactly once for the current ticket. */
+  redeemTicket(input: unknown): boolean {
+    if (typeof input !== "string" || !this.ticket || !/^[A-Za-z0-9_-]{43}$/.test(input)) return false;
+    if (!safeEqual(input, this.ticket)) return false;
+    this.ticket = null;
+    return true;
   }
 
   /** Returns true exactly once for the right code; burns the code on success or on the last failed attempt. */

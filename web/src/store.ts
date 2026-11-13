@@ -4,6 +4,8 @@ import * as api from "./api";
 
 export const app = reactive({
   paired: false,
+  /** Signing in with the QR code right now. */
+  pairing: false,
   socket: "connecting" as api.SocketStatus,
   state: null as PhoneState | null,
   champions: new Map<number, ChampionSummary>(),
@@ -54,6 +56,12 @@ function onState(state: PhoneState): void {
   app.state = state;
 }
 
+/** The phone's Unpair button: the PC forgets this phone. */
+export async function unpairPhone(): Promise<void> {
+  await api.unpair();
+  unpair();
+}
+
 function unpair(): void {
   api.forgetToken();
   socket?.close();
@@ -82,12 +90,28 @@ async function checkForNewVersion(): Promise<void> {
 }
 
 export function start(): void {
-  app.paired = !!api.initToken();
-  if (app.paired) openSocket();
+  const { token, ticket } = api.initToken();
+  app.paired = !!token;
+  if (ticket) void pairWithTicket(ticket);
+  else if (app.paired) openSocket();
   window.setInterval(() => (app.now = performance.now()), 250);
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible") void checkForNewVersion();
   });
+}
+
+/** Opened from the QR code: sign in with it. If it was already used, fall back to a saved key. */
+async function pairWithTicket(ticket: string): Promise<void> {
+  app.pairing = true;
+  try {
+    await api.pair({ ticket });
+    app.paired = true;
+  } catch (e) {
+    showToast(app.paired ? "This QR code was already used, but this phone is still paired." : (e as Error).message, app.paired ? "info" : "error");
+  } finally {
+    app.pairing = false;
+  }
+  if (app.paired) openSocket();
 }
 
 function openSocket(): void {
@@ -100,13 +124,13 @@ function openSocket(): void {
     },
     onUnauthorized: () => {
       unpair();
-      showToast("This phone isn't paired with the current connector session. Scan the QR or enter the code.", "info");
+      showToast("This phone isn't paired with this PC anymore. Scan the QR code in the Ward window or enter the code.", "info");
     },
   });
 }
 
 export async function pairWithCode(code: string): Promise<void> {
-  await api.pair(code);
+  await api.pair({ code });
   app.paired = true;
   openSocket();
 }
@@ -119,7 +143,7 @@ export async function run(name: api.ActionName, body?: Record<string, unknown>):
   } catch (e) {
     if (e instanceof api.UnauthorizedError) {
       unpair();
-      showToast("Pairing expired. Scan the QR or enter the code again.", "info");
+      showToast("This phone isn't paired with this PC anymore. Scan the QR code in the Ward window or enter the code.", "info");
     } else {
       showToast((e as Error).message);
     }

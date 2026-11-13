@@ -8,6 +8,7 @@
  */
 
 import os from "node:os";
+import path from "node:path";
 import readline from "node:readline";
 import { parseArgs } from "node:util";
 import QRCode from "qrcode";
@@ -18,7 +19,8 @@ import { Loadout } from "./loadout";
 import { addSecret, log } from "./log";
 import { WATCHED_URIS, Store } from "./state/store";
 import { staticFiles } from "./server/assets";
-import { FailureLimiter, formatCode, generateToken, Pairing } from "./server/auth";
+import { FailureLimiter, formatCode, Pairing } from "./server/auth";
+import { defaultDataDir, Devices, type Phone } from "./server/devices";
 import { createHttpServer, expectedHost } from "./server/http";
 import { isPrivateIPv4, lanCandidates } from "./server/net";
 import { attachPhoneSocket } from "./server/phone-ws";
@@ -58,20 +60,54 @@ function exitWithError(message: string): void {
   }
 }
 
-async function printBanner(host: string, port: number, token: string, code: string, others: string[]): Promise<void> {
-  const base = `http://${host}:${port}`;
-  const qr = await QRCode.toString(`${base}/?t=${token}`, { type: "terminal", small: true, errorCorrectionLevel: "L" });
-  log.plain("");
-  log.plain(`  Ward ${VERSION}`);
-  log.plain("  Scan with your phone camera (phone must be on the same Wi-Fi):");
+function ago(t: number): string {
+  const days = Math.floor((Date.now() - t) / 86_400_000);
+  return days <= 0 ? "today" : days === 1 ? "yesterday" : `${days} days ago`;
+}
+
+function printPhones(phones: readonly Phone[]): void {
+  if (!phones.length) {
+    log.plain("  No phones remembered.");
+    return;
+  }
+  log.plain("  Remembered phones (they connect by themselves):");
+  phones.forEach((p, i) => log.plain(`    ${i + 1}. ${p.name}, last used ${ago(p.lastSeenAt)}`));
+  log.plain('  Type "forget 1" (a number) or "forget all" to remove phones.');
+}
+
+async function printPairing(base: string, ticket: string, code: string): Promise<void> {
+  // The ticket goes after #, so the phone never sends it in a request line or Referer.
+  const qr = await QRCode.toString(`${base}/#p=${ticket}`, { type: "terminal", small: true, errorCorrectionLevel: "L" });
+  log.plain("  To add a phone, scan with its camera (same Wi-Fi as this PC):");
   log.plain(qr, true);
   log.plain(`  Or open  ${base}  on the phone and enter code:  ${formatCode(code)}`);
-  log.plain("  (code works once, for 5 minutes. Press Enter here for a new one)");
-  if (others.length) log.plain(`  Other LAN addresses found: ${others.join(", ")} (use --host to pick one)`);
-  log.plain("  Keep this window open while you play. Ctrl+C to quit.\n");
+  log.plain("  (the QR code works once; the code works once, for 5 minutes. Press Enter for new ones)");
+}
+
+async function printBanner(opts: {
+  base: string;
+  ticket: string;
+  code: string;
+  others: string[];
+  phones: readonly Phone[];
+  previousAddress?: string;
+}): Promise<void> {
+  log.plain("");
+  log.plain(`  Ward ${VERSION}`);
+  await printPairing(opts.base, opts.ticket, opts.code);
+  if (opts.others.length) log.plain(`  Other LAN addresses found: ${opts.others.join(", ")} (use --host to pick one)`);
+  log.plain("");
+  printPhones(opts.phones);
+  if (opts.phones.length && opts.previousAddress && `http://${opts.previousAddress}` !== opts.base)
+    log.plain(
+      `  This PC's address changed (it was ${opts.previousAddress}), so these phones need to scan the QR code once more.`,
+    );
+  log.plain('  Keep this window open while you play. Type "phones" to list phones, Ctrl+C to quit.\n');
 }
 
 function runServer(opts: { host?: string; port: number; leagueDir?: string }): void {
+  const devices = new Devices({ file: path.join(defaultDataDir(), "phones.json") });
+  const previousAddress = devices.previousAddress;
   const candidates = lanCandidates();
   let host = opts.host;
   if (host) {
@@ -79,15 +115,22 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     const local = Object.values(os.networkInterfaces()).flat().some((i) => i?.address === host);
     if (!local) fatal(`--host ${host} is not an address of this PC.`);
   } else {
-    host = candidates[0]?.address;
+    // Prefer last run's address when this PC still has it, so remembered phones keep working
+    // even if Windows lists the network adapters in a different order.
+    const lastIp = previousAddress?.split(":")[0];
+    host = candidates.find((c) => c.address === lastIp)?.address ?? candidates[0]?.address;
     if (!host) fatal("No private LAN (Wi-Fi/Ethernet) IPv4 address found. Is this PC connected to your home network?");
   }
   const lanHost = host as string;
   const others = candidates.map((c) => `${c.address} (${c.name})`).filter((s) => !s.startsWith(lanHost + " "));
 
-  const token = generateToken();
-  addSecret(token);
   const pairing = new Pairing();
+  const base = `http://${lanHost}:${opts.port}`;
+  const newTicket = () => {
+    const t = pairing.issueTicket();
+    addSecret(t);
+    return t;
+  };
   const limiter = new FailureLimiter();
   const store = new Store();
   const champions = new Champions();
@@ -118,8 +161,15 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
   const server = createHttpServer({
     host: lanHost,
     port: opts.port,
-    token,
+    devices,
     pairing,
+    onPaired: (_phone, via) => {
+      log.plain(
+        via === "qr"
+          ? "\n  Phone paired. It will reconnect by itself from now on. The QR code is used up; press Enter for a new one.\n"
+          : "\n  Phone paired. It will reconnect by itself from now on.\n",
+      );
+    },
     limiter,
     champions,
     loadout,
@@ -127,7 +177,7 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     getLcu: () => manager.http,
     staticFiles: staticFiles(),
   });
-  const phoneSocket = attachPhoneSocket(server, { host: expectedHost({ host: lanHost, port: opts.port }), token, limiter, store });
+  const phoneSocket = attachPhoneSocket(server, { host: expectedHost({ host: lanHost, port: opts.port }), devices, limiter, store });
 
   server.on("error", (e: NodeJS.ErrnoException) => {
     manager.stop();
@@ -137,14 +187,42 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
   });
 
   server.listen(opts.port, lanHost, () => {
-    void printBanner(lanHost, opts.port, token, pairing.issue(), others).then(() => manager.start());
+    const phones = devices.list();
+    devices.rememberAddress(`${lanHost}:${opts.port}`);
+    void printBanner({ base, ticket: newTicket(), code: pairing.issue(), others, phones, previousAddress }).then(() =>
+      manager.start(),
+    );
   });
 
   if (process.stdin.isTTY) {
     const rl = readline.createInterface({ input: process.stdin });
-    rl.on("line", () => {
-      const code = pairing.issue();
-      log.plain(`\n  New pairing code:  ${formatCode(code)}  (works once, 5 minutes)\n`);
+    rl.on("line", (line) => {
+      const cmd = line.trim().toLowerCase();
+      if (cmd === "phones") {
+        log.plain("");
+        printPhones(devices.list());
+        log.plain("");
+        return;
+      }
+      const forget = /^forget\s+(all|\d+)$/.exec(cmd);
+      if (forget) {
+        const phones = devices.list();
+        if (forget[1] === "all") {
+          const n = devices.clear();
+          log.plain(`\n  Forgot ${n} phone${n === 1 ? "" : "s"}. They need to pair again.\n`);
+        } else {
+          const p = phones[Number(forget[1]) - 1];
+          if (p && devices.remove(p.id)) log.plain(`\n  Forgot ${p.name}. It needs to pair again.\n`);
+          else log.plain(`\n  There's no phone ${forget[1]}. Type "phones" to see the list.\n`);
+        }
+        return;
+      }
+      if (cmd !== "") {
+        log.plain('\n  Commands: Enter = new QR code and pairing code, "phones", "forget <number>", "forget all".\n');
+        return;
+      }
+      log.plain("");
+      void printPairing(base, newTicket(), pairing.issue()).then(() => log.plain(""));
     });
   }
 

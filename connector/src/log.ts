@@ -1,9 +1,9 @@
 /**
  * Console logger that scrubs secrets.
  *
- * Every secret (session token, LCU password) is registered with `addSecret`
- * and replaced by "<redacted>" in anything we print. Query strings of the form
- * `t=...` are scrubbed as a second line of defence.
+ * Every secret (phone keys, QR tickets, LCU password) is registered with `addSecret`
+ * and replaced by "<redacted>" in anything we print. Link parts of the form
+ * `?t=...` and `#p=...` are scrubbed as a second line of defence.
  */
 
 const secrets = new Set<string>();
@@ -19,7 +19,7 @@ export function removeSecret(value: string): void {
 export function redact(text: string): string {
   let out = text;
   for (const s of secrets) out = out.split(s).join("<redacted>");
-  return out.replace(/([?&]t=)[^&\s"']+/g, "$1<redacted>");
+  return out.replace(/([?&]t=|[#&]p=)[^&\s"']+/g, "$1<redacted>");
 }
 
 function stamp(): string {

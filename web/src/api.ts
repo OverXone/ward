@@ -13,7 +13,9 @@ import type {
   SpellOption,
 } from "@shared/phone-api";
 
-const TOKEN_KEY = "lolc.token";
+// The key this phone got when it paired. The PC remembers it, so it keeps working after Ward restarts.
+const TOKEN_KEY = "ward.key";
+const OLD_TOKEN_KEY = "lolc.token"; // per-launch session token from before phones were remembered
 
 function safeGet(key: string): string | null {
   try {
@@ -33,18 +35,16 @@ function safeSet(key: string, value: string | null): void {
 
 let token: string | null = null;
 
-/** Reads ?t= from the QR link (then strips it from the address bar), else localStorage. */
-export function initToken(): string | null {
-  const url = new URL(location.href);
-  const fromUrl = url.searchParams.get("t");
-  if (fromUrl && /^[A-Za-z0-9_-]{16,128}$/.test(fromUrl)) {
-    token = fromUrl;
-    safeSet(TOKEN_KEY, fromUrl);
-  } else {
-    token = safeGet(TOKEN_KEY);
-  }
-  if (url.searchParams.has("t")) history.replaceState(null, "", url.pathname);
-  return token;
+/**
+ * Loads the saved key and returns the QR ticket if this page was opened from the Ward QR code
+ * (`/#p=<ticket>`). The ticket is removed from the address bar right away.
+ */
+export function initToken(): { token: string | null; ticket: string | null } {
+  safeSet(OLD_TOKEN_KEY, null);
+  token = safeGet(TOKEN_KEY);
+  const m = /^#p=([A-Za-z0-9_-]{43})$/.exec(location.hash);
+  if (location.hash || location.search) history.replaceState(null, "", location.pathname);
+  return { token, ticket: m?.[1] ?? null };
 }
 
 export function hasToken(): boolean {
@@ -68,17 +68,28 @@ async function errorMessage(res: Response): Promise<string> {
   return `Request failed (${res.status})`;
 }
 
-export async function pair(code: string): Promise<void> {
+/** Trades a typed code or the QR ticket for this phone's own key. Sends the old key along so the PC replaces it. */
+export async function pair(secret: { code: string } | { ticket: string }): Promise<void> {
   const res = await fetch("/api/pair", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ code }),
+    body: JSON.stringify({ ...secret, previous: token ?? undefined }),
   });
   if (!res.ok) throw new Error(await errorMessage(res));
   const body = (await res.json()) as { token?: string };
   if (!body.token) throw new Error("Pairing failed");
   token = body.token;
   safeSet(TOKEN_KEY, body.token);
+}
+
+/** Asks the PC to forget this phone, then drops the key here (even if the PC can't be reached). */
+export async function unpair(): Promise<void> {
+  try {
+    await authed("/api/forget", { method: "POST" });
+  } catch {
+    // offline or already forgotten: forgetting locally is what matters
+  }
+  forgetToken();
 }
 
 async function authed(path: string, init: RequestInit = {}): Promise<Response> {
