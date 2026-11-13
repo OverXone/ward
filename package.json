@@ -21,6 +21,7 @@
     "watch:web": "npm run watch -w web"
   },
   "devDependencies": {
-    "postject": "^1.0.0-alpha.6"
+    "postject": "^1.0.0-alpha.6",
+    "resedit": "^3.1.0"
   }
 }

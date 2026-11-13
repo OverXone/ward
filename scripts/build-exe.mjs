@@ -7,14 +7,16 @@
  * 2. esbuild             -> build/connector.cjs (one CommonJS file, as Node SEA requires)
  * 3. sea-config.json     -> the script plus every web/dist file as a SEA asset (read with sea.getAsset)
  * 4. node --experimental-sea-config -> build/sea-prep.blob
- * 5. copy node.exe, postject the blob in -> dist/Ward.exe
+ * 5. copy node.exe with Ward's version info and icon (resedit), postject the blob in -> dist/Ward.exe
  */
 
 import { execFileSync, execSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { Data, NtExecutable, NtExecutableResource, Resource } from "resedit";
+import { ico } from "./logo.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "build");
@@ -23,6 +25,54 @@ const webDist = path.join(root, "web", "dist");
 const exe = path.join(dist, "Ward.exe");
 
 const step = (msg) => console.log(`\n> ${msg}`);
+const version = JSON.parse(readFileSync(path.join(root, "package.json"), "utf8")).version;
+
+/**
+ * Copies node.exe to `dest` with Ward's own version info and icon, so Windows (firewall prompt,
+ * Task Manager, file properties) shows "Ward" instead of "Node.js JavaScript Runtime".
+ * Done before postject: resource editors can break an exe that already has the SEA blob in it.
+ * Node's Authenticode signature is dropped; it would be invalid after the injection anyway.
+ */
+function brand(src, dest) {
+  const exe = NtExecutable.from(readFileSync(src), { ignoreCert: true });
+  const res = NtExecutableResource.from(exe);
+
+  const [major, minor, patch] = version.split(".").map(Number);
+  const info = Resource.VersionInfo.fromEntries(res.entries)[0];
+  if (!info) throw new Error("node.exe has no version info to replace");
+  info.setFileVersion(major, minor, patch, 0);
+  info.setProductVersion(major, minor, patch, 0);
+  for (const lang of info.getAllLanguagesForStringValues()) {
+    info.removeAllStringValues(lang, false);
+    info.setStringValues(lang, {
+      FileDescription: "Ward",
+      ProductName: "Ward",
+      CompanyName: "OverXone",
+      LegalCopyright: "Copyright (c) 2026 OverXone. PolyForm Noncommercial 1.0.0. Includes Node.js (MIT).",
+      OriginalFilename: "Ward.exe",
+      InternalName: "Ward",
+      FileVersion: version,
+      ProductVersion: version,
+      Comments: "Control the League of Legends client from your phone over your local Wi-Fi. Not endorsed by Riot Games.",
+    });
+  }
+  info.outputToResourceEntries(res.entries);
+
+  const icon = Data.IconFile.from(ico());
+  const groups = Resource.IconGroupEntry.fromEntries(res.entries);
+  const group = groups[0] ?? { id: 1, lang: 1033 };
+  Resource.IconGroupEntry.replaceIconsForResource(
+    res.entries,
+    group.id,
+    group.lang,
+    icon.icons.map((i) => i.data),
+  );
+
+  // allowShrink: our icon is smaller than Node's. Without it the resource section keeps its old file
+  // size while its memory size shrinks, and postject then misreads the relocation table after it.
+  res.outputResource(exe, false, true);
+  writeFileSync(dest, Buffer.from(exe.generate()));
+}
 
 if (process.platform !== "win32") throw new Error("Build the exe on Windows (League only runs there).");
 
@@ -80,9 +130,11 @@ console.log(`  ${uiFiles.length} UI files embedded`);
 step("Creating the SEA blob");
 execFileSync(process.execPath, ["--experimental-sea-config", path.join(out, "sea-config.json")], { stdio: "inherit" });
 
-step("Injecting into a copy of node.exe");
+step("Copying node.exe and giving it Ward's name, version and icon");
 rmSync(exe, { force: true });
-copyFileSync(process.execPath, exe);
+brand(process.execPath, exe);
+
+step("Injecting the app into the exe");
 execFileSync(
   process.execPath,
   [
