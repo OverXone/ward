@@ -16,6 +16,10 @@
     "test": "npm test -w connector",
     "typecheck": "npm run typecheck -w connector",
     "build:web": "npm run build -w web",
+    "build:exe": "node scripts/build-exe.mjs",
     "watch:web": "npm run watch -w web"
+  },
+  "devDependencies": {
+    "postject": "^1.0.0-alpha.6"
   }
 }
