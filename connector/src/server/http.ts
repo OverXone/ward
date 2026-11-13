@@ -6,7 +6,8 @@
 import http from "node:http";
 import { ActionError, isActionName, runAction } from "../actions";
 import type { Champions } from "../champions";
-import type { Loadout } from "../loadout";
+import { listFriends } from "../friends";
+import type { ImageKind, Loadout } from "../loadout";
 import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { Store } from "../state/store";
@@ -151,9 +152,22 @@ export function createRequestHandler(deps: ServerDeps) {
         const list = await deps.loadout.availableSkins();
         return list ? sendJson(res, 200, list) : sendError(res, 503, "League client not connected");
       }
-      const image = /^\/api\/(spell|skin)s\/(\d{1,9})\/image$/.exec(path);
+      if (path === "/api/runes/styles") {
+        const list = await deps.loadout.runeStyles();
+        return list ? sendJson(res, 200, list) : sendError(res, 503, "Couldn't read rune paths from League");
+      }
+      if (path === "/api/runes/recommended") {
+        // [] when not in champ select or League has nothing to suggest: that's not an error for the phone.
+        return sendJson(res, 200, (await deps.loadout.recommendedRunes()) ?? []);
+      }
+      if (path === "/api/friends") {
+        const http = deps.getLcu();
+        const list = http ? await listFriends(http, deps.store.handles) : null;
+        return list ? sendJson(res, 200, list) : sendError(res, 503, "Couldn't read your friends list from League");
+      }
+      const image = /^\/api\/(spell|skin|style|perk)s\/(\d{1,9})\/image$/.exec(path);
       if (image) {
-        const img = await deps.loadout.image(image[1] as "spell" | "skin", Number(image[2]));
+        const img = await deps.loadout.image(image[1] as ImageKind, Number(image[2]));
         if (!img) return sendError(res, 404, "no image");
         res.writeHead(200, { "Content-Type": img.type, "Content-Length": img.body.length, "Cache-Control": "private, max-age=3600" });
         res.end(img.body);
@@ -180,6 +194,7 @@ export function createRequestHandler(deps: ServerDeps) {
           lists: () => deps.store.championLists(),
           knownChampions: () => deps.champions.list(),
           loadout: deps.loadout,
+          handles: deps.store.handles,
         });
       } catch (e) {
         if (e instanceof ActionError) {

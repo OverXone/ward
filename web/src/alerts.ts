@@ -73,6 +73,11 @@ export function swapRequestAlert(): void {
   chime([988, 784, 988]);
 }
 
+export function invitationAlert(): void {
+  vibrate([120, 60, 120]);
+  chime([784, 988, 1175]);
+}
+
 export function stopVibration(): void {
   vibrate([0]);
 }

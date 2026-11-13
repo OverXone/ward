@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import InvitationCards from "./components/InvitationCards.vue";
 import ChampSelectScreen from "./screens/ChampSelectScreen.vue";
 import LobbyScreen from "./screens/LobbyScreen.vue";
 import PairScreen from "./screens/PairScreen.vue";
@@ -54,12 +55,17 @@ const reconnecting = computed(() => app.paired && app.state && app.socket !== "o
 
 <template>
   <div v-if="reconnecting" class="banner" role="status">Reconnecting to your PC…</div>
+  <InvitationCards
+    v-if="view.kind !== 'pair' && app.state?.lcu === 'connected' && app.state.invitations?.length"
+    :invitations="app.state.invitations"
+    :phase="app.state.phase"
+  />
   <PairScreen v-if="view.kind === 'pair'" />
   <StatusScreen v-else-if="view.kind === 'status'" :title="view.title" :sub="view.sub" :spinner="view.spinner" :emoji="view.emoji" />
-  <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" />
+  <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" :runes="app.state!.runes" />
   <QueueScreen v-else-if="view.kind === 'queue'" :queue="app.state!.queue" :queue-name="app.state!.lobby?.queueName ?? null" />
   <ReadyCheckScreen v-else-if="view.kind === 'ready'" :ready-check="app.state!.readyCheck!" />
-  <ChampSelectScreen v-else-if="view.kind === 'champ'" :cs="app.state!.champSelect!" />
+  <ChampSelectScreen v-else-if="view.kind === 'champ'" :cs="app.state!.champSelect!" :runes="app.state!.runes" />
   <Transition name="toast">
     <div v-if="app.toast" class="toast" :class="app.toast.kind" role="alert">{{ app.toast.text }}</div>
   </Transition>

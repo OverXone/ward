@@ -32,6 +32,8 @@ export interface LobbyView {
   isLeader: boolean;
   canStartActivity: boolean;
   memberCount: number;
+  /** League lets me invite friends to this lobby. */
+  canInvite: boolean;
 }
 
 export interface QueueView {
@@ -118,6 +120,58 @@ export interface SkinOption {
   chromas: { id: number; name: string; color: string | null }[];
 }
 
+/** One of my rune pages. `handle` is an opaque per-run name for it, never the client's page id. */
+export interface RunePageView {
+  handle: string;
+  name: string;
+  primaryStyleId: number;
+  subStyleId: number;
+  /** false for League's preset pages. */
+  isEditable: boolean;
+  /** false when the page isn't complete. */
+  isValid: boolean;
+  isCurrent: boolean;
+}
+
+export interface RunesView {
+  pages: RunePageView[];
+}
+
+/** A rune path (Precision, Domination, ...) for labels and icons (GET /api/runes/styles). */
+export interface RuneStyleOption {
+  id: number;
+  name: string;
+}
+
+/** A rune page League recommends for my champion (GET /api/runes/recommended). */
+export interface RecommendedRunes {
+  championId: number;
+  /** Position in League's list; sent back with the champion id to apply it. */
+  index: number;
+  primaryStyleId: number;
+  subStyleId: number;
+  keystoneId: number;
+  keystoneName: string;
+}
+
+/** A lobby invitation someone sent me. */
+export interface InvitationView {
+  handle: string;
+  /** The inviter's Riot ID game name, or "A friend" when the client doesn't say. */
+  from: string;
+  queueName: string | null;
+  canAccept: boolean;
+}
+
+/** A friend I could invite to my lobby (GET /api/friends). */
+export interface FriendOption {
+  handle: string;
+  name: string;
+  /** "Online", "Away", "In queue", "In champ select", "In game", "In your lobby", "Invited" */
+  status: string;
+  canInvite: boolean;
+}
+
 export interface PhoneState {
   lcu: LcuStatus;
   phase: GameflowPhase | null;
@@ -125,6 +179,8 @@ export interface PhoneState {
   queue: QueueView | null;
   readyCheck: ReadyCheckView | null;
   champSelect: ChampSelectView | null;
+  runes: RunesView | null;
+  invitations: InvitationView[];
 }
 
 export interface ChampionSummary {

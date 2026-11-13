@@ -66,10 +66,37 @@ function summarize(uri: string, data: unknown): string {
     case URI.pickable:
     case URI.bannable:
       return Array.isArray(data) ? `${data.length} ids` : "(not an array)";
+    case URI.runePages: {
+      if (!Array.isArray(data)) return "(not an array)";
+      const editable = data.filter((p: any) => p?.isEditable !== false).length;
+      const current = data.find((p: any) => p?.current === true);
+      return `${data.length} pages (${editable} editable), current=${current ? `#${current.id} "${current.name}"` : "none flagged"}; fields: ${Object.keys(data[0] ?? {}).join(",")}`;
+    }
+    case URI.currentRunePage:
+      return `#${d.id} "${d.name}" isEditable=${d.isEditable} isValid=${d.isValid} styles=${d.primaryStyleId}/${d.subStyleId} perks=${(d.selectedPerkIds ?? []).length}`;
+    case URI.invitations:
+      return Array.isArray(data)
+        ? `${data.length} invitations, states=${JSON.stringify(data.map((i: any) => i?.state))}; fields: ${Object.keys(data[0] ?? {}).join(",")}`
+        : "(not an array)";
+    case FRIENDS: {
+      if (!Array.isArray(data)) return "(not an array)";
+      const by = (k: string) => JSON.stringify(data.reduce((acc: Record<string, number>, f: any) => ((acc[String(f?.[k])] = (acc[String(f?.[k])] ?? 0) + 1), acc), {}));
+      const withId = data.filter((f: any) => Number.isInteger(f?.summonerId) && f.summonerId > 0).length;
+      return `${data.length} friends (${withId} with summonerId), availability=${by("availability")} product=${by("product")}; fields: ${Object.keys(data[0] ?? {}).join(",")}`;
+    }
+    case SENT_INVITES:
+      return Array.isArray(data) ? `${data.length} sent, fields: ${Object.keys(data[0] ?? {}).join(",")}` : "(not an array)";
+    case "/lol-perks/v1/styles":
+      return Array.isArray(data) ? `${data.length} rune paths (${data.map((x: any) => x?.name).join(", ")})` : "(not an array)";
+    case "/lol-perks/v1/inventory":
+      return JSON.stringify(data).slice(0, 160);
     default:
       return "";
   }
 }
+
+const FRIENDS = "/lol-chat/v1/friends";
+const SENT_INVITES = "/lol-lobby/v2/lobby/invitations";
 
 const PROBES: [string, string][] = [
   ["gameflow phase", URI.phase],
@@ -79,6 +106,13 @@ const PROBES: [string, string][] = [
   ["champ select session", URI.session],
   ["pickable champions", URI.pickable],
   ["bannable champions", URI.bannable],
+  ["rune pages", URI.runePages],
+  ["current rune page", URI.currentRunePage],
+  ["rune paths", "/lol-perks/v1/styles"],
+  ["rune page slots", "/lol-perks/v1/inventory"],
+  ["received invitations", URI.invitations],
+  ["sent invitations", SENT_INVITES],
+  ["friends", FRIENDS],
 ];
 
 async function probe(http: LcuHttp, dump: (r: object) => void): Promise<void> {
@@ -87,7 +121,8 @@ async function probe(http: LcuHttp, dump: (r: object) => void): Promise<void> {
     try {
       const { status, data } = await http.json("GET", p);
       log.plain(`  ${String(status).padEnd(4)} GET ${p.padEnd(46)} ${label}: ${status === 200 ? summarize(p, data) : ""}`);
-      dump({ probe: p, status, data: scrubIdentity(data) });
+      // Friends carry names, notes and chat ids: only the summary goes into the dump file.
+      dump({ probe: p, status, data: p === FRIENDS ? summarize(p, data) : scrubIdentity(data) });
     } catch (e) {
       log.plain(`  ERR  GET ${p}: ${(e as Error).message}`);
     }

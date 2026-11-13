@@ -11,6 +11,7 @@
  *
  * Keys: l=lobby  q=queue  r=ready check  c=champ select  n=finish current turn  g=in game  0=none  h=help
  *       s / o / t = a teammate asks you to swap roles / pick order / champions
+ *       i = a friend invites you to their lobby
  *       f = freeze (stop answering HTTP, like a hung client); f again to thaw
  */
 
@@ -118,6 +119,84 @@ function jpgLike(seed: number): Buffer {
   return png([60 + ((seed * 53) % 180), 60 + ((seed * 97) % 180), 60 + ((seed * 31) % 180)], 48);
 }
 
+// ---------- runes ----------
+
+const STYLES = [
+  { id: 8000, name: "Precision", color: [200, 170, 80] },
+  { id: 8100, name: "Domination", color: [200, 50, 60] },
+  { id: 8200, name: "Sorcery", color: [110, 110, 230] },
+  { id: 8300, name: "Inspiration", color: [70, 200, 210] },
+  { id: 8400, name: "Resolve", color: [90, 190, 90] },
+] as const;
+const styleIcon = (id: number) => `/lol-game-data/assets/v1/perk-images/Styles/${id}_${STYLES.find((x) => x.id === id)?.name ?? "Style"}.png`;
+const KEYSTONES: Record<number, { id: number; name: string }> = {
+  8000: { id: 8005, name: "Press the Attack" },
+  8100: { id: 8112, name: "Electrocute" },
+  8200: { id: 8214, name: "Summon Aery" },
+  8400: { id: 8437, name: "Grasp of the Undying" },
+};
+const perksFor = (primary: number, sub: number) => [KEYSTONES[primary]?.id ?? primary + 1, primary + 11, primary + 21, primary + 31, sub + 12, sub + 22, 5008, 5002, 5001];
+
+let nextPageId = 103;
+/** Owns 3 custom page slots: two used, so the first recommended page gets a new page and later ones reuse it. */
+const OWNED_PAGES = 3;
+const page = (id: number, name: string, primary: number, sub: number, editable: boolean, current = false) => ({
+  id, name, isEditable: editable, isDeletable: editable, isActive: true, isValid: true, isTemporary: false, current,
+  primaryStyleId: primary, subStyleId: sub, selectedPerkIds: perksFor(primary, sub), order: id, lastModified: Date.now(),
+});
+let pages = [
+  page(101, "Mid mage", 8200, 8300, true),
+  page(102, "Jungle", 8100, 8000, true, true),
+  page(1, "Precision", 8000, 8400, false),
+  page(2, "Domination", 8100, 8200, false),
+];
+
+function publishPerks(): void {
+  set("/lol-perks/v1/pages", structuredClone(pages));
+  set("/lol-perks/v1/currentpage", structuredClone(pages.find((p) => p.current) ?? null));
+}
+
+function recommendedFor(champ: number) {
+  const pairs: [number, number][] = champ % 2 ? [[8200, 8300], [8100, 8200]] : [[8000, 8400], [8400, 8300]];
+  return pairs.map(([primary, sub], i) => ({
+    isDefault: i === 0,
+    isRecommendationOverride: false,
+    position: "MIDDLE",
+    primaryPerkStyleId: primary,
+    secondaryPerkStyleId: sub,
+    recommendationChampionId: champ,
+    keystone: { ...KEYSTONES[primary]!, iconPath: `/lol-game-data/assets/v1/perk-images/Styles/${STYLES.find((x) => x.id === primary)!.name}/${KEYSTONES[primary]!.name.replace(/ /g, "")}.png` },
+    perks: perksFor(primary, sub).map((id) => ({ id, name: `Rune ${id}`, iconPath: `/lol-game-data/assets/v1/perk-images/x/${id}.png` })),
+    summonerSpellIds: [4, 14],
+  }));
+}
+
+// ---------- friends & invitations ----------
+
+const FRIENDS = [
+  { summonerId: 2001, gameName: "DuoPartner", availability: "chat", product: "league_of_legends", lol: { gameStatus: "outOfGame" } },
+  { summonerId: 2002, gameName: "MidOrFeed", availability: "away", product: "league_of_legends", lol: { gameStatus: "outOfGame" } },
+  { summonerId: 2003, gameName: "RankedGrinder", availability: "dnd", product: "league_of_legends", lol: { gameStatus: "inGame" } },
+  { summonerId: 2004, gameName: "ValorantMain", availability: "chat", product: "valorant", lol: null },
+  { summonerId: 2005, gameName: "Sleepy", availability: "offline", product: "league_of_legends", lol: null },
+  { summonerId: 2006, gameName: "OnTheBus", availability: "mobile", product: "league_of_legends", lol: null },
+].map((f) => ({ ...f, name: f.gameName, puuid: `puuid-${f.summonerId}`, pid: `${f.summonerId}@mock.pvp.net`, note: "" }));
+const INVITATIONS = "/lol-lobby/v2/received-invitations";
+let invitations: { invitationId: string; state: string; canAcceptInvitation: boolean; fromSummonerId: number; fromSummonerName: string; gameConfig: { queueId: number; gameMode: string } }[] = [];
+let sentInvites: { toSummonerId: number; state: string }[] = [];
+let nextInvite = 1;
+
+function publishInvitations(): void {
+  set(INVITATIONS, structuredClone(invitations));
+}
+
+/** Key i: a friend invites me to a Ranked Flex lobby. */
+function incomingInvite(): void {
+  invitations.push({ invitationId: `inv-${nextInvite++}`, state: "Pending", canAcceptInvitation: true, fromSummonerId: 2001, fromSummonerName: "", gameConfig: { queueId: 440, gameMode: "CLASSIC" } });
+  say("DuoPartner invited you to Ranked Flex");
+  publishInvitations();
+}
+
 // ---------- state ----------
 
 interface Action {
@@ -174,19 +253,32 @@ function say(msg: string): void {
 function toNone(): void {
   clearTimers();
   session = null;
+  sentInvites = [];
   for (const uri of Object.values(URIS)) set(uri, null);
   set(URIS.phase, "None");
 }
 
-function toLobby(): void {
+let lobbyMembers: { summonerId: number }[] = [];
+function publishLobby(queueId: number, leader: boolean): void {
+  set(URIS.lobby, {
+    canStartActivity: true,
+    localMember: { isLeader: leader, allowedInviteOthers: leader, puuid: "mock-puuid", summonerId: 1002 },
+    gameConfig: { queueId },
+    members: structuredClone(lobbyMembers),
+  });
+}
+
+function toLobby(queueId = 420, leader = true, others: number[] = []): void {
   clearTimers();
   session = null;
+  sentInvites = [];
+  lobbyMembers = [{ summonerId: 1002 }, ...others.map((summonerId) => ({ summonerId }))];
   set(URIS.session, null);
   set(URIS.readyCheck, null);
   set(URIS.search, null);
-  set(URIS.lobby, { canStartActivity: true, localMember: { isLeader: true, puuid: "mock-puuid" }, gameConfig: { queueId: 420 }, members: [{}] });
+  publishLobby(queueId, leader);
   set(URIS.phase, "Lobby");
-  say("phase Lobby");
+  say(`phase Lobby (queue ${queueId}${leader ? "" : ", not leader"})`);
 }
 
 function toQueue(): void {
@@ -510,7 +602,7 @@ async function handle(req: any, res: any): Promise<void> {
   }
   if (m === "GET" && p === "/lol-gameflow/v1/session") {
     if (!session) return lcuError(res, 404, "No session");
-    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ phase: state[URIS.phase], gameData: { queue: { id: 420, gameMode: "CLASSIC" }, password: "" } }));
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ phase: state[URIS.phase], gameData: { queue: { id: 420, gameMode: "CLASSIC", mapId: 11 }, password: "" } }));
   }
   if (m === "GET" && p === "/lol-champ-select/v1/skin-carousel-skins") {
     const me = session && memberByCell(LOCAL_CELL);
@@ -539,6 +631,89 @@ async function handle(req: any, res: any): Promise<void> {
   }
   if (m === "GET" && p === "/lol-game-queues/v1/queues/420") {
     return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ id: 420, name: "Ranked Solo/Duo", description: "Ranked Solo/Duo", shortName: "Ranked" }));
+  }
+  if (m === "GET" && p === "/lol-game-queues/v1/queues/440") {
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ id: 440, name: "Ranked Flex", description: "Ranked Flex", shortName: "Flex" }));
+  }
+
+  // --- runes ---
+  const json = (status: number, value: unknown) => void res.writeHead(status, { "Content-Type": "application/json" }).end(JSON.stringify(value));
+  if (m === "GET" && p === "/lol-perks/v1/pages") return json(200, pages);
+  if (m === "GET" && p === "/lol-perks/v1/currentpage") {
+    const cur = pages.find((x) => x.current);
+    return cur ? json(200, cur) : lcuError(res, 404, "No current page");
+  }
+  if (m === "GET" && p === "/lol-perks/v1/styles") return json(200, STYLES.map(({ id, name }) => ({ id, name, iconPath: styleIcon(id), slots: [] })));
+  if (m === "GET" && p === "/lol-perks/v1/inventory") return json(200, { ownedPageCount: OWNED_PAGES });
+  if (m === "PUT" && p === "/lol-perks/v1/currentpage") {
+    const target = pages.find((x) => x.id === body);
+    if (!target) return lcuError(res, 400, "INVALID_PAGE");
+    pages = pages.map((x) => ({ ...x, current: x.id === target.id }));
+    publishPerks();
+    return void res.writeHead(204).end();
+  }
+  if (m === "POST" && p === "/lol-perks/v1/pages") {
+    if (pages.filter((x) => x.isEditable).length >= OWNED_PAGES) return lcuError(res, 400, "MAX_PAGES_REACHED");
+    if (!Array.isArray(body?.selectedPerkIds) || body.selectedPerkIds.length !== 9) return lcuError(res, 400, "INVALID_PERKS");
+    const created = { ...page(nextPageId++, String(body.name ?? "New page"), body.primaryStyleId, body.subStyleId, true), selectedPerkIds: body.selectedPerkIds };
+    if (body.current) pages = pages.map((x) => ({ ...x, current: false }));
+    pages.splice(pages.filter((x) => x.isEditable).length, 0, { ...created, current: !!body.current });
+    publishPerks();
+    return json(200, created);
+  }
+  const pagePut = /^\/lol-perks\/v1\/pages\/(\d+)$/.exec(p);
+  if (m === "PUT" && pagePut) {
+    const i = pages.findIndex((x) => x.id === Number(pagePut[1]));
+    if (i < 0) return lcuError(res, 404, "No such page");
+    if (!pages[i]!.isEditable) return lcuError(res, 400, "PAGE_NOT_EDITABLE");
+    pages[i] = { ...pages[i]!, ...body, id: pages[i]!.id, isEditable: true, lastModified: Date.now() };
+    if (body?.current) pages = pages.map((x, j) => ({ ...x, current: j === i }));
+    publishPerks();
+    return json(200, pages[i]);
+  }
+  const recommended = /^\/lol-perks\/v1\/recommended-pages\/champion\/(\d+)\/position\/(\w+)\/map\/(\d+)$/.exec(p);
+  if (m === "GET" && recommended) return json(200, recommendedFor(Number(recommended[1])));
+  if (m === "GET" && /^\/lol-game-data\/assets\/v1\/perk-images\/[\w/]+\.png$/.test(p)) {
+    return void res.writeHead(200, { "Content-Type": "image/png" }).end(jpgLike(p.length));
+  }
+
+  // --- invitations & friends ---
+  if (m === "GET" && p === INVITATIONS) return json(200, invitations);
+  const inv = /^\/lol-lobby\/v2\/received-invitations\/([\w-]+)\/(accept|decline)$/.exec(p);
+  if (m === "POST" && inv) {
+    const found = invitations.find((x) => x.invitationId === inv[1] && x.state === "Pending");
+    if (!found) return lcuError(res, 404, "No such invitation");
+    invitations = invitations.filter((x) => x !== found);
+    publishInvitations();
+    if (inv[2] === "accept") later(500, () => toLobby(found.gameConfig.queueId, false, [found.fromSummonerId]));
+    say(`invitation ${inv[2]}ed`);
+    return void res.writeHead(204).end();
+  }
+  const summoner = /^\/lol-summoner\/v1\/summoners\/(\d+)$/.exec(p);
+  if (m === "GET" && summoner) {
+    const f = FRIENDS.find((x) => x.summonerId === Number(summoner[1]));
+    return f ? json(200, { summonerId: f.summonerId, gameName: f.gameName, tagLine: "EUW", puuid: f.puuid }) : lcuError(res, 404, "No summoner");
+  }
+  if (m === "GET" && p === "/lol-chat/v1/friends") return json(200, FRIENDS);
+  if (m === "GET" && p === "/lol-lobby/v2/lobby/invitations") return state[URIS.phase] === "Lobby" ? json(200, sentInvites) : lcuError(res, 404, "No lobby");
+  if (m === "POST" && p === "/lol-lobby/v2/lobby/invitations") {
+    if (state[URIS.phase] !== "Lobby") return lcuError(res, 400, "NOT_IN_LOBBY");
+    const ids = Array.isArray(body) ? body.map((x: any) => x?.toSummonerId) : [];
+    if (!ids.length || !ids.every((id: unknown) => FRIENDS.some((f) => f.summonerId === id))) return lcuError(res, 400, "INVALID_INVITEE");
+    for (const id of ids as number[]) {
+      sentInvites.push({ toSummonerId: id, state: "Pending" });
+      const name = FRIENDS.find((f) => f.summonerId === id)!.gameName;
+      say(`invited ${name}; they join in 3 s`);
+      later(3000, () => {
+        const sent = sentInvites.find((x) => x.toSummonerId === id && x.state === "Pending");
+        if (!sent || state[URIS.phase] !== "Lobby") return;
+        sent.state = "Accepted";
+        lobbyMembers.push({ summonerId: id });
+        publishLobby(((state[URIS.lobby] as any)?.gameConfig?.queueId as number) ?? 420, true);
+        say(`${name} joined your lobby`);
+      });
+    }
+    return json(200, sentInvites);
   }
   if (m === "POST" && p === "/lol-lobby/v2/lobby/matchmaking/search") {
     if (state[URIS.phase] !== "Lobby") return lcuError(res, 400, "Not in lobby");
@@ -642,11 +817,13 @@ void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType
     const port = (server.address() as { port: number }).port;
     mkdirSync(dir, { recursive: true });
     writeFileSync(path.join(dir, "lockfile"), `LeagueClient:${process.pid}:${port}:${password}:https`);
+    publishPerks();
+    publishInvitations();
     toLobby();
     console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
     console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
     console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit");
-    console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions\n");
+    console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions   i = a friend invites you\n");
   });
 });
 
@@ -669,6 +846,7 @@ if (process.stdin.isTTY) {
     const k = key.sequence;
     if (k === "x") cleanup();
     else if (k === "l") toLobby();
+    else if (k === "i") incomingInvite();
     else if (k === "q") toQueue();
     else if (k === "r") toReadyCheck();
     else if (k === "c") toChampSelect();
@@ -689,7 +867,8 @@ if (process.stdin.isTTY) {
       s: () => incomingSwap("positionSwaps", 1),
       o: () => incomingSwap("pickOrderSwaps", 4),
       t: () => incomingSwap("trades", 0),
+      i: incomingInvite,
     };
-    ({ l: toLobby, q: toQueue, r: toReadyCheck, c: toChampSelect, n: finishCurrentTurn, g: toGame, "0": toNone, x: cleanup, ...swaps } as Record<string, () => void>)[k]?.();
+    ({ l: () => toLobby(), q: toQueue, r: toReadyCheck, c: toChampSelect, n: finishCurrentTurn, g: toGame, "0": toNone, x: cleanup, ...swaps } as Record<string, () => void>)[k]?.();
   });
 }

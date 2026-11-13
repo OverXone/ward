@@ -9,7 +9,8 @@ import { EventEmitter } from "node:events";
 import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
-import type { LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
+import { Handles } from "../handles";
+import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView, RunesView } from "../shared/phone-api";
 import { deriveChampSelect, type LcuSession } from "./champ-select";
 
 export const URI = {
@@ -20,6 +21,9 @@ export const URI = {
   session: "/lol-champ-select/v1/session",
   pickable: "/lol-champ-select/v1/pickable-champion-ids",
   bannable: "/lol-champ-select/v1/bannable-champion-ids",
+  runePages: "/lol-perks/v1/pages",
+  currentRunePage: "/lol-perks/v1/currentpage",
+  invitations: "/lol-lobby/v2/received-invitations",
 } as const;
 
 type Key = keyof typeof URI;
@@ -28,7 +32,7 @@ const KEY_BY_URI = new Map<string, Key>(Object.entries(URI).map(([k, v]) => [v, 
 
 interface RawLobby {
   canStartActivity?: boolean;
-  localMember?: { isLeader?: boolean };
+  localMember?: { isLeader?: boolean; allowedInviteOthers?: boolean };
   gameConfig?: { queueId?: number };
   members?: unknown[];
 }
@@ -48,6 +52,29 @@ interface RawReadyCheck {
   timer?: number;
 }
 
+/** The subset of a /lol-perks/v1/pages entry we read. */
+export interface RawRunePage {
+  id?: unknown;
+  name?: unknown;
+  isEditable?: unknown;
+  isValid?: unknown;
+  current?: unknown;
+  primaryStyleId?: unknown;
+  subStyleId?: unknown;
+  selectedPerkIds?: unknown;
+  isTemporary?: unknown;
+}
+
+/** The subset of a /lol-lobby/v2/received-invitations entry we read. */
+export interface RawInvitation {
+  invitationId?: unknown;
+  state?: unknown;
+  canAcceptInvitation?: unknown;
+  fromSummonerId?: unknown;
+  fromSummonerName?: unknown;
+  gameConfig?: { queueId?: unknown };
+}
+
 type Raw = {
   phase: string | null;
   lobby: RawLobby | null;
@@ -56,6 +83,9 @@ type Raw = {
   session: LcuSession | null;
   pickable: number[] | null;
   bannable: number[] | null;
+  runePages: RawRunePage[] | null;
+  currentRunePage: RawRunePage | null;
+  invitations: RawInvitation[] | null;
 };
 
 const emptyRaw = (): Raw => ({
@@ -66,6 +96,9 @@ const emptyRaw = (): Raw => ({
   session: null,
   pickable: null,
   bannable: null,
+  runePages: null,
+  currentRunePage: null,
+  invitations: null,
 });
 
 /** Champion ids from a list the client sent (integers, or integer strings), or null if it isn't a list. */
@@ -99,7 +132,53 @@ export function deriveLobby(lobby: RawLobby | null, queueName: string | null): L
     isLeader: !!lobby.localMember?.isLeader,
     canStartActivity: !!lobby.canStartActivity,
     memberCount: Array.isArray(lobby.members) ? lobby.members.length : 1,
+    // Older clients don't send allowedInviteOthers; then only the leader is assumed to be allowed.
+    canInvite: typeof lobby.localMember?.allowedInviteOthers === "boolean" ? lobby.localMember.allowedInviteOthers : !!lobby.localMember?.isLeader,
   };
+}
+
+const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
+const styleId = (v: unknown) => (isId(v) ? v : 0);
+
+/** Pages the phone can choose from. Custom pages first, then League's presets, each in the client's order. */
+export function deriveRunes(pages: RawRunePage[] | null, current: RawRunePage | null, handles: Handles): RunesView | null {
+  if (!Array.isArray(pages)) return null;
+  const currentId = isId(current?.id) ? current.id : null;
+  const list = pages
+    .filter((p) => p && isId(p.id) && typeof p.name === "string" && p.isTemporary !== true)
+    .map((p) => ({
+      handle: handles.handle("page", p.id as number),
+      name: (p.name as string).trim().slice(0, 40) || "Rune page",
+      primaryStyleId: styleId(p.primaryStyleId),
+      subStyleId: styleId(p.subStyleId),
+      isEditable: p.isEditable !== false,
+      isValid: p.isValid !== false,
+      isCurrent: currentId !== null ? p.id === currentId : p.current === true,
+    }));
+  return { pages: [...list.filter((p) => p.isEditable), ...list.filter((p) => !p.isEditable)] };
+}
+
+/** Pending invitations in League's order. Names and queues come from caches filled elsewhere. */
+export function deriveInvitations(
+  raw: RawInvitation[] | null,
+  names: ReadonlyMap<number, string>,
+  queueNames: ReadonlyMap<number, string>,
+  handles: Handles,
+): InvitationView[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((i) => i && typeof i.invitationId === "string" && i.invitationId.length > 0 && i.state === "Pending")
+    .map((i) => {
+      const sent = typeof i.fromSummonerName === "string" ? i.fromSummonerName.trim() : "";
+      const looked = isId(i.fromSummonerId) ? names.get(i.fromSummonerId) : undefined;
+      const queueId = i.gameConfig?.queueId;
+      return {
+        handle: handles.handle("invite", i.invitationId as string),
+        from: (looked || sent || "A friend").slice(0, 32),
+        queueName: isId(queueId) ? (queueNames.get(queueId) ?? null) : null,
+        canAccept: i.canAcceptInvitation !== false,
+      };
+    });
 }
 
 export function deriveQueue(search: RawSearch | null): QueueView | null {
@@ -148,6 +227,11 @@ export class Store extends EventEmitter {
   private listsFetching = false;
   private lastCsPhase: string | null = null;
   private oddListsLogged = new Set<string>();
+  /** Riot ID game names of people who invited me, by summoner id. */
+  private inviterNames = new Map<number, string>();
+  private inviterLookups = new Set<number>();
+  /** Opaque names the phone uses for rune pages, invitations and friends (see handles.ts). */
+  readonly handles = new Handles();
   state: PhoneState = this.derive();
 
   setLcuStatus(status: LcuStatus): void {
@@ -160,6 +244,9 @@ export class Store extends EventEmitter {
     this.raw = emptyRaw();
     this.lastCsPhase = null;
     this.queueNames.clear();
+    this.inviterNames.clear();
+    this.inviterLookups.clear();
+    this.handles.clear();
     void this.refreshAll();
   }
 
@@ -288,6 +375,10 @@ export class Store extends EventEmitter {
       case "bannable":
         this.raw[key] = championIds(value);
         break;
+      case "runePages":
+      case "invitations":
+        this.raw[key] = Array.isArray(value) ? (value as never) : null;
+        break;
       case "session": {
         const s = value as LcuSession | null;
         this.raw.session = s && typeof s === "object" && Array.isArray(s.myTeam) ? s : null;
@@ -297,7 +388,8 @@ export class Store extends EventEmitter {
         this.raw[key] = value && typeof value === "object" ? (value as never) : null;
     }
 
-    if (key === "lobby") void this.ensureQueueName();
+    if (key === "lobby") void this.ensureQueueName(this.raw.lobby?.gameConfig?.queueId);
+    if (key === "invitations") this.lookUpInvitations();
 
     if (recompute) {
       this.recompute();
@@ -309,8 +401,31 @@ export class Store extends EventEmitter {
     }
   }
 
-  private async ensureQueueName(): Promise<void> {
-    const id = this.raw.lobby?.gameConfig?.queueId;
+  /** Fetches the inviter's name and the queue name for each new pending invitation. */
+  private lookUpInvitations(): void {
+    for (const inv of this.raw.invitations ?? []) {
+      if (inv?.state !== "Pending") continue;
+      void this.ensureQueueName(inv.gameConfig?.queueId);
+      const id = inv.fromSummonerId;
+      if (isId(id) && !this.inviterLookups.has(id) && this.inviterLookups.size < 200) {
+        this.inviterLookups.add(id);
+        void this.lookUpInviter(id);
+      }
+    }
+  }
+
+  private async lookUpInviter(summonerId: number): Promise<void> {
+    const http = this.http;
+    if (!http) return;
+    const s = await http.getOrNull<{ gameName?: unknown; displayName?: unknown }>(`/lol-summoner/v1/summoners/${summonerId}`);
+    const name = [s?.gameName, s?.displayName].find((n): n is string => typeof n === "string" && n.trim() !== "");
+    if (name && http === this.http) {
+      this.inviterNames.set(summonerId, name.trim().slice(0, 32));
+      this.recompute();
+    }
+  }
+
+  private async ensureQueueName(id: unknown): Promise<void> {
     const http = this.http;
     if (!http || !Number.isInteger(id) || (id as number) < 0 || this.queueNames.has(id as number)) return;
     const q = await http.getOrNull<{ description?: string; name?: string; shortName?: string }>(
@@ -336,6 +451,8 @@ export class Store extends EventEmitter {
       queue: connected ? deriveQueue(search) : null,
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
       champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable) : null,
+      runes: connected ? deriveRunes(r.runePages, r.currentRunePage, this.handles) : null,
+      invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
     };
   }
 

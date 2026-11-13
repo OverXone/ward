@@ -3,6 +3,12 @@ import { computed, ref } from "vue";
 import { pairWithCode } from "../store";
 
 const code = ref("");
+
+// Home-screen tip, unless we're already running from the home screen.
+const standalone =
+  window.matchMedia?.("(display-mode: standalone)").matches || (navigator as Navigator & { standalone?: boolean }).standalone === true;
+// iPadOS reports itself as a Mac, but with touch.
+const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 const error = ref<string | null>(null);
 const busy = ref(false);
 
@@ -56,6 +62,18 @@ async function submit() {
       </form>
 
       <p class="hint">Phone and PC must be on the same Wi-Fi. The code works once; press Enter in the connector window for a new one.</p>
+
+      <aside v-if="!standalone" class="tip card">
+        <strong>Tip: put it on your home screen</strong>
+        <span v-if="ios">
+          In Safari tap <b>Share</b>, then <b>Add to Home Screen</b>. Open it from the icon and type the code there: the icon
+          doesn't share Safari's login, so a QR scan pairs Safari, not the icon.
+        </span>
+        <span v-else>
+          Open the browser menu (<b>⋮</b>) and choose <b>Add to Home screen</b>, so it opens like an app. After each
+          connector restart, pair again from the icon.
+        </span>
+      </aside>
     </div>
   </main>
 </template>
@@ -89,6 +107,23 @@ label {
   margin: 0;
   color: var(--danger);
   font-size: 14px;
+}
+.tip {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 40ch;
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 13px;
+  color: var(--muted);
+}
+.tip strong {
+  color: var(--text);
+  font-size: 14px;
+}
+.tip b {
+  color: var(--text);
 }
 .hint {
   color: var(--muted);

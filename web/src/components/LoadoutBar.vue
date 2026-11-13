@@ -1,12 +1,21 @@
 <script setup lang="ts">
-import type { SkinOption, SpellOption } from "@shared/phone-api";
+import type { RunesView, SkinOption, SpellOption } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
 import * as api from "../api";
 import { run, showToast } from "../store";
 import AssetImage from "./AssetImage.vue";
+import RunesButton from "./RunesButton.vue";
 
-/** My summoner spells (always) and skin (once I have a champion), each opening a picker. */
-const props = defineProps<{ spells: [number, number]; skinId: number; championId: number; canPickSkin: boolean }>();
+/** My summoner spells and rune page (always) and skin (once I've locked in), each opening a picker. */
+const props = defineProps<{
+  spells: [number, number];
+  skinId: number;
+  championId: number;
+  /** Champion I've locked or hovered: League's rune recommendations are for this one. */
+  runesChampionId: number;
+  canPickSkin: boolean;
+  runes: RunesView | null;
+}>();
 
 // The spell list rarely changes within a champ select: load once, keep names for the labels.
 const spellList = ref<SpellOption[] | null>(null);
@@ -74,11 +83,12 @@ async function chooseSkin(id: number) {
 </script>
 
 <template>
-  <section class="loadout" aria-label="Your spells and skin">
+  <section class="loadout" aria-label="Your spells, runes and skin">
     <button v-for="slot in [0, 1] as const" :key="slot" class="spell" :aria-label="`Spell ${slot === 0 ? 'D' : 'F'}: ${spellName(spells[slot]) || 'none'}`" @click="openSpell(slot)">
       <AssetImage kind="spell" :id="spells[slot]" :width="40" :label="spellName(spells[slot]) || '?'" />
       <span class="key">{{ slot === 0 ? "D" : "F" }}</span>
     </button>
+    <RunesButton v-if="runes" :runes="runes" :champion-id="runesChampionId" />
     <button v-if="canPickSkin && skins?.length" class="skin" @click="sheet = { kind: 'skin' }">
       <span class="skin-label">Skin</span>
       <span class="skin-name">{{ skinName }}</span>

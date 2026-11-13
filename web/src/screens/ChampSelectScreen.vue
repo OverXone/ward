@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { SWAP_KINDS, type ChampSelectView } from "@shared/phone-api";
+import { SWAP_KINDS, type ChampSelectView, type RunesView } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
 import { myTurnAlert, swapRequestAlert } from "../alerts";
 import ChampGrid from "../components/ChampGrid.vue";
@@ -10,7 +10,7 @@ import SwapSheet from "../components/SwapSheet.vue";
 import TeamColumn from "../components/TeamColumn.vue";
 import { app, champSelectSecondsLeft, championName, run } from "../store";
 
-const props = defineProps<{ cs: ChampSelectView }>();
+const props = defineProps<{ cs: ChampSelectView; runes: RunesView | null }>();
 
 const me = computed(() => props.cs.myTeam.find((p) => p.isMe) ?? null);
 const mode = computed<"pick" | "ban">(() => props.cs.myTurn?.type ?? "pick");
@@ -129,8 +129,8 @@ const subline = computed(() => {
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Tap a champion, then confirm the ban." : "Tap a champion, then lock in.";
   if (cs.canHoverIntent && cs.phase === "PLANNING") return "Bans start when the timer ends. This only shows your team your plan.";
   if (cs.canHoverIntent) return "Tap to show your team what you'll play.";
-  if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Set your spells and skin below; runes on your PC." : "";
-  if (cs.hasLockedPick) return "You're locked in. Set your spells and skin below.";
+  if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Set your spells, runes and skin below." : "";
+  if (cs.hasLockedPick) return "You're locked in. Set your spells, runes and skin below.";
   return "";
 });
 
@@ -170,7 +170,9 @@ const seconds = computed(() => champSelectSecondsLeft());
       :spells="cs.mySpells"
       :skin-id="cs.mySkinId"
       :champion-id="me.championId"
+      :runes-champion-id="me.championId || me.pickIntentId"
       :can-pick-skin="cs.hasLockedPick"
+      :runes="runes"
     />
 
     <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />

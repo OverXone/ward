@@ -4,3 +4,4 @@ web/dist/
 *.log
 lcu-events-*.jsonl
 build/
+lcu-help*.json
