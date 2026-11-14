@@ -145,6 +145,50 @@ function incomingInvite(): void {
   publishInvitations();
 }
 
+// ---------- game modes ----------
+
+/** Like LolGameQueuesQueue, trimmed. Includes entries the phone must not offer (custom, tutorial, switched off, hidden). */
+const QUEUE_LIST = [
+  { id: 490, name: "Quickplay", description: "Quickplay", gameMode: "CLASSIC", category: "PvP", slots: true },
+  { id: 480, name: "Swiftplay", description: "Swiftplay", gameMode: "SWIFTPLAY", category: "PvP", slots: true },
+  { id: 400, name: "Normal Draft", description: "Normal Draft", gameMode: "CLASSIC", category: "PvP", roles: true },
+  { id: 420, name: "Ranked Solo/Duo", description: "Ranked Solo/Duo", shortName: "Ranked", gameMode: "CLASSIC", category: "PvP", roles: true, allowablePremadeSizes: [1, 2] },
+  { id: 440, name: "Ranked Flex", description: "Ranked Flex", shortName: "Flex", gameMode: "CLASSIC", category: "PvP", roles: true, allowablePremadeSizes: [1, 2, 3, 5] },
+  { id: 450, name: "ARAM", description: "ARAM", gameMode: "ARAM", category: "PvP" },
+  { id: 1700, name: "Arena", description: "Arena", gameMode: "CHERRY", category: "PvP" },
+  { id: 1900, name: "URF", description: "URF", gameMode: "URF", category: "PvP", queueAvailability: "PlatformDisabled" },
+  { id: 870, name: "Co-op vs. AI Intro", description: "Co-op vs. AI Intro", gameMode: "CLASSIC", category: "VersusAi" },
+  { id: 890, name: "Co-op vs. AI Intermediate", description: "Co-op vs. AI Intermediate", gameMode: "CLASSIC", category: "VersusAi" },
+  { id: 1090, name: "Teamfight Tactics", description: "Teamfight Tactics", gameMode: "TFT", category: "PvP" },
+  { id: 2000, name: "Tutorial 1", description: "Tutorial 1", gameMode: "TUTORIAL_MODULE_1", category: "VersusAi" },
+  { id: 3100, name: "Custom", description: "Custom", gameMode: "PRACTICETOOL", category: "Custom", isCustom: true },
+  { id: 3200, name: "Hidden test queue", description: "Hidden test queue", gameMode: "CLASSIC", category: "PvP", isVisible: false },
+].map((q) => ({
+  isVisible: true,
+  isEnabled: true,
+  isCustom: false,
+  queueAvailability: "Available",
+  allowablePremadeSizes: [1, 2, 3, 4, 5],
+  ...q,
+  showPositionSelector: !!q.roles,
+  showQuickPlaySlotSelection: !!q.slots,
+}));
+
+/** Like POST /lol-lobby/v2/eligibility/party: Co-op Intro is for new accounts, Solo/Duo takes at most two. */
+function eligibility(partySize: number) {
+  return QUEUE_LIST.map((q) => {
+    const restrictions: { restrictionCode: string }[] = [];
+    if (q.id === 870) restrictions.push({ restrictionCode: "PlayerMaxLevelRestriction" });
+    if (!q.allowablePremadeSizes.includes(partySize)) restrictions.push({ restrictionCode: "TeamMaxSizeRestriction" });
+    if (q.slots) restrictions.push({ restrictionCode: "QPPlayerPositionCoverageRestriction" }); // slots not set yet: still pickable
+    return { queueId: q.id, eligible: restrictions.length === 0, restrictions };
+  });
+}
+
+/** My roles in the lobby (LolLobbyLobbyParticipantDto first/secondPositionPreference). */
+let myRoles: [string, string] = ["MIDDLE", "BOTTOM"];
+const ROLES = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "FILL", "UNSELECTED"];
+
 // ---------- state ----------
 
 interface Action {
@@ -307,10 +351,21 @@ function toNone(): void {
 // Lobby members carry no name (like LolLobbyLobbyParticipantDto on a live client); chat names come from the participants.
 let lobbyMembers: { summonerId: number; puuid: string }[] = [];
 function publishLobby(queueId: number, leader: boolean): void {
+  const q = QUEUE_LIST.find((x) => x.id === queueId);
+  const rolesDone = !q?.showPositionSelector || (myRoles[0] !== "UNSELECTED" && (myRoles[0] === "FILL" || myRoles[1] !== "UNSELECTED"));
   set(URIS.lobby, {
-    canStartActivity: true,
-    localMember: { isLeader: leader, allowedInviteOthers: leader, puuid: "mock-puuid", summonerId: 1002 },
-    gameConfig: { queueId },
+    // Quickplay needs champion slots, which this mock never sets: like a real client, it won't start then.
+    canStartActivity: rolesDone && !q?.showQuickPlaySlotSelection,
+    localMember: {
+      isLeader: leader,
+      allowedInviteOthers: leader,
+      allowedChangeActivity: leader,
+      puuid: "mock-puuid",
+      summonerId: 1002,
+      firstPositionPreference: q?.showPositionSelector ? myRoles[0] : "UNSELECTED",
+      secondPositionPreference: q?.showPositionSelector ? myRoles[1] : "UNSELECTED",
+    },
+    gameConfig: { queueId, gameMode: q?.gameMode ?? "CLASSIC", showPositionSelector: !!q?.showPositionSelector, showQuickPlaySlotSelection: !!q?.showQuickPlaySlotSelection },
     members: structuredClone(lobbyMembers),
     multiUserChatId: lobbyChat,
     multiUserChatPassword: "secret-chat-pw",
@@ -769,11 +824,42 @@ async function handle(req: any, res: any): Promise<void> {
     publishSession();
     return void res.writeHead(204).end();
   }
-  if (m === "GET" && p === "/lol-game-queues/v1/queues/420") {
-    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ id: 420, name: "Ranked Solo/Duo", description: "Ranked Solo/Duo", shortName: "Ranked" }));
+  if (m === "GET" && p === "/lol-game-queues/v1/queues") {
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(QUEUE_LIST.map(({ roles: _r, slots: _s, ...q }) => q)));
   }
-  if (m === "GET" && p === "/lol-game-queues/v1/queues/440") {
-    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ id: 440, name: "Ranked Flex", description: "Ranked Flex", shortName: "Flex" }));
+  const queueById = /^\/lol-game-queues\/v1\/queues\/(\d+)$/.exec(p);
+  if (m === "GET" && queueById) {
+    const q = QUEUE_LIST.find((x) => x.id === Number(queueById[1]));
+    if (!q) return lcuError(res, 404, "No queue");
+    const { roles: _r, slots: _s, ...out } = q;
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(out));
+  }
+  if (m === "POST" && (p === "/lol-lobby/v2/eligibility/party" || p === "/lol-lobby/v2/eligibility/self")) {
+    const size = p.endsWith("party") && state[URIS.phase] === "Lobby" ? lobbyMembers.length : 1;
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(eligibility(size)));
+  }
+  if (m === "POST" && p === "/lol-lobby/v2/lobby") {
+    const phase = state[URIS.phase];
+    const q = QUEUE_LIST.find((x) => x.id === body?.queueId);
+    if (!q || q.isCustom || q.queueAvailability !== "Available") return lcuError(res, 400, "INVALID_QUEUE");
+    if (phase !== "None" && phase !== "Lobby") return lcuError(res, 400, "INVALID_LOBBY_STATE");
+    const lobby = state[URIS.lobby] as any;
+    if (phase === "Lobby" && !lobby?.localMember?.isLeader) return lcuError(res, 400, "NOT_LEADER");
+    if (phase === "Lobby" && !q.allowablePremadeSizes.includes(lobbyMembers.length)) return lcuError(res, 400, "INVALID_PARTY_SIZE");
+    // Switching from a lobby keeps the party and its chat (assumed; not yet checked on a live client).
+    toLobby(q.id, true, [], phase !== "Lobby");
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(state[URIS.lobby]));
+  }
+  if (m === "PUT" && p === "/lol-lobby/v2/lobby/members/localMember/position-preferences") {
+    const lobby = state[URIS.lobby] as any;
+    if (state[URIS.phase] !== "Lobby" || !lobby) return lcuError(res, 404, "No lobby");
+    const first = body?.firstPreference;
+    const second = body?.secondPreference ?? "UNSELECTED";
+    if (!ROLES.includes(first) || !ROLES.includes(second) || (first === second && first !== "UNSELECTED")) return lcuError(res, 400, "INVALID_POSITION_PREFERENCES");
+    myRoles = [first, second];
+    publishLobby(lobby.gameConfig.queueId, lobby.localMember.isLeader);
+    say(`roles ${first} / ${second}`);
+    return void res.writeHead(201).end();
   }
 
   // --- invitations & friends ---
@@ -838,6 +924,7 @@ async function handle(req: any, res: any): Promise<void> {
   }
   if (m === "POST" && p === "/lol-lobby/v2/lobby/matchmaking/search") {
     if (state[URIS.phase] !== "Lobby") return lcuError(res, 400, "Not in lobby");
+    if (!(state[URIS.lobby] as any)?.canStartActivity) return lcuError(res, 400, "INVALID_LOBBY_STATE");
     toQueue();
     return void res.writeHead(204).end();
   }

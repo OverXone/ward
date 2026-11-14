@@ -135,6 +135,30 @@ async function main() {
   check((await act("chat/send", { text: "x".repeat(201) })).status === 400, "too-long chat message refused");
   const lobbyRoom = state!.chat!.room;
 
+  // --- game mode and roles (DuoPartner is in the party now) ---
+  type Mode = { id: number; name: string; group: string; canPick: boolean; reason: string | null };
+  const modes = await get<Mode[]>("/api/queues");
+  const names = modes.map((q) => q.name);
+  check(names.includes("ARAM") && names.includes("Teamfight Tactics"), "game modes listed");
+  check(!["URF", "Tutorial 1", "Custom", "Hidden test queue"].some((n) => names.includes(n)), "switched-off, tutorial, custom and hidden modes left out");
+  check(modes.find((q) => q.id === 870)?.reason === "Level too high" && modes.find((q) => q.id === 490)?.canPick === true, "ineligible mode greyed out, Quickplay slot checks don't block");
+  check((await act("lobby/mode", { queueId: 870 })).status === 409, "can't switch to a mode League won't allow");
+  check((await act("lobby/mode", { queueId: 3100 })).status === 409, "can't switch to a custom game");
+  check((await act("lobby/mode", { queueId: 450 })).status === 204, "switch to ARAM");
+  await waitFor("ARAM lobby", () => state?.lobby?.queueName === "ARAM" && !state.lobby.showRoles);
+  check(state!.lobby!.memberCount === 2 && state!.chat?.room === lobbyRoom, "party and lobby chat kept after switching");
+  check((await act("lobby/roles", { first: "TOP", second: "JUNGLE" })).status === 409, "no roles in ARAM");
+  check((await act("lobby/mode", { queueId: 400 })).status === 204, "switch to Normal Draft");
+  await waitFor("draft lobby", () => state?.lobby?.queueName === "Normal Draft" && state.lobby.showRoles);
+  check((await act("lobby/roles", { first: "TOP", second: "TOP" })).status === 400, "same role twice refused");
+  check((await act("lobby/roles", { first: "TOP", second: "JUNGLE" })).status === 204, "set roles");
+  await waitFor("roles set", () => state?.lobby?.roles.join() === "TOP,JUNGLE");
+  check((await act("lobby/roles", { first: "FILL", second: "UNSELECTED" })).status === 204, "fill");
+  await waitFor("fill set", () => state?.lobby?.roles.join() === "FILL,UNSELECTED" && state.lobby.canStartActivity);
+  check(true, "roles pushed to the phone");
+  check((await act("lobby/mode", { queueId: 420 })).status === 204, "back to Ranked Solo/Duo");
+  await waitFor("ranked again", () => state?.lobby?.queueName === "Ranked Solo/Duo" && state.lobby.memberCount === 2);
+
   check((await act("queue/cancel")).status === 409, "cancel queue refused while not queued");
   check((await act("queue/start")).status === 204, "start queue");
   await waitFor("Matchmaking", () => state?.phase === "Matchmaking" && state.queue);
@@ -231,6 +255,13 @@ async function main() {
   check(true, "choose-one: locked the offered champion");
   mockKey("l");
   await waitFor("back to lobby", () => state?.phase === "Lobby");
+
+  // --- opening a lobby from the phone ---
+  mockKey("0");
+  await waitFor("no lobby", () => state?.phase === "None");
+  check((await act("lobby/mode", { queueId: 450 })).status === 204, "open an ARAM lobby with no lobby open");
+  await waitFor("ARAM lobby opened", () => state?.phase === "Lobby" && state.lobby?.queueName === "ARAM" && state.lobby.isLeader);
+  check(true, "lobby opened from the phone");
 
   // --- the phone stays paired when Ward restarts ---
   ws.close();

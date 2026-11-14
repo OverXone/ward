@@ -12,7 +12,8 @@ import { cleanText, conversationPath, currentConversation, MAX_CHAT_TEXT } from 
 import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
-import { SWAP_KINDS, type SwapKind } from "./shared/phone-api";
+import { listQueues } from "./queues";
+import { PICKABLE_ROLES, SWAP_KINDS, type Role, type SwapKind } from "./shared/phone-api";
 import {
   bannedChampions,
   benchChampions,
@@ -26,7 +27,7 @@ import {
   type LcuSession,
 } from "./state/champ-select";
 import { log } from "./log";
-import { championIds, URI } from "./state/store";
+import { canChangeMode, championIds, URI, type RawLobby } from "./state/store";
 
 export class ActionError extends Error {
   constructor(
@@ -318,6 +319,26 @@ function resolveHandle(ctx: ActionContext, kind: HandleKind, handle: string): st
 /** League's in-game phases: no joining another lobby then. */
 const IN_GAME = new Set(["GameStart", "InProgress", "Reconnect"]);
 
+// ---------- lobby mode and roles ----------
+
+const ROLE_PATH = "/lol-lobby/v2/lobby/members/localMember/position-preferences";
+
+/** First and second role from the phone. FILL as first role means no second one. */
+function rolesFrom(input: Input): [Role, Role] {
+  const { first, second } = input;
+  const ok = (v: unknown): v is Role => typeof v === "string" && (PICKABLE_ROLES as readonly string[]).includes(v);
+  if (!ok(first)) throw new ActionError(400, `first must be one of ${PICKABLE_ROLES.join(", ")}`);
+  if (first === "FILL") {
+    if (second !== undefined && second !== "UNSELECTED") throw new ActionError(400, "Fill takes no second role");
+    return ["FILL", "UNSELECTED"];
+  }
+  if (second !== "UNSELECTED" && !ok(second)) throw new ActionError(400, `second must be one of ${PICKABLE_ROLES.join(", ")} or UNSELECTED`);
+  if (second === first) throw new ActionError(400, "Pick two different roles");
+  return [first, second];
+}
+
+const memberCount = (lobby: RawLobby | null) => (Array.isArray(lobby?.members) ? lobby.members.length : 0);
+
 // ---------- the whitelist ----------
 
 const ACTIONS = {
@@ -463,6 +484,49 @@ const ACTIONS = {
       if (typeof raw.puuid === "string" && raw.puuid) invite.toPuuid = raw.puuid;
       const status = await call(http, "POST", "/lol-lobby/v2/lobby/invitations", [invite]);
       if (status === 404) throw new ActionError(502, "This League client can't send invitations from here. Use your PC.");
+    },
+  },
+  "lobby/mode": {
+    keys: ["queueId"],
+    validate: (input) => void positiveInt(input, "queueId"),
+    async run(input, http) {
+      const queueId = positiveInt(input, "queueId");
+      const phase = await getPhase(http);
+      if (phase === "Matchmaking") throw new ActionError(409, "Leave the queue first");
+      if (phase !== "Lobby" && phase !== "None") throw new ActionError(409, "You can change the mode from the lobby");
+      const lobby = phase === "Lobby" ? await http.getOrNull<RawLobby>(URI.lobby) : null;
+      if (lobby && !canChangeMode(lobby)) throw new ActionError(409, "Only the party leader can change the mode");
+      if (lobby?.gameConfig?.queueId === queueId) return;
+      // Only modes the play menu offers (no custom games, tutorials or switched-off queues).
+      const queues = await listQueues(http);
+      const queue = queues?.find((q) => q.id === queueId);
+      if (!queue) throw new ActionError(409, "That mode isn't available right now");
+      if (!queue.canPick) throw new ActionError(409, `${queue.name}: ${queue.reason?.toLowerCase() ?? "not available right now"}`);
+
+      const before = memberCount(lobby);
+      const res = await http.request("POST", URI.lobby, { queueId });
+      if (res.status < 200 || res.status >= 300) {
+        if (res.status === 404) throw new ActionError(502, "This League client can't change the mode from here. Use your PC.");
+        throw new ActionError(502, friendlyLcuError(lcuErrorMessage(res.body)) ?? `League client refused (${res.status})`);
+      }
+      // Not yet checked on a live client: does the party stay together? Log it so the activity log tells.
+      if (before > 1) {
+        const after = memberCount(await http.getOrNull<RawLobby>(URI.lobby));
+        if (after < before) log.warn(`Switching to ${queue.name} left the party behind (${before} players before, ${after} after)`);
+        else log.info(`Switched the party (${before} players) to ${queue.name}`);
+      }
+    },
+  },
+  "lobby/roles": {
+    keys: ["first", "second"],
+    validate: (input) => void rolesFrom(input),
+    async run(input, http) {
+      const [firstPreference, secondPreference] = rolesFrom(input);
+      if ((await getPhase(http)) !== "Lobby") throw new ActionError(409, "Open a lobby first");
+      const lobby = await http.getOrNull<RawLobby>(URI.lobby);
+      if (!lobby?.gameConfig?.showPositionSelector) throw new ActionError(409, "This mode doesn't use roles");
+      const status = await call(http, "PUT", ROLE_PATH, { firstPreference, secondPreference });
+      if (status === 404) throw new ActionError(502, "This League client can't set roles from here. Use your PC.");
     },
   },
   "chat/send": {

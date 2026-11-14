@@ -7,6 +7,7 @@ import http from "node:http";
 import { ActionError, isActionName, runAction } from "../actions";
 import type { Champions } from "../champions";
 import { listFriends } from "../friends";
+import { listQueues } from "../queues";
 import type { Loadout } from "../loadout";
 import type { LcuHttp } from "../lcu/http";
 import type { Store } from "../state/store";
@@ -182,6 +183,11 @@ export function createRequestHandler(deps: ServerDeps) {
         const http = deps.getLcu();
         const list = http ? await listFriends(http, deps.store.handles) : null;
         return list ? sendJson(res, 200, list) : sendError(res, 503, "Couldn't read your friends list from League");
+      }
+      if (path === "/api/queues") {
+        const http = deps.getLcu();
+        const list = http ? await listQueues(http) : null;
+        return list ? sendJson(res, 200, list) : sendError(res, 503, "Couldn't read the game modes from League");
       }
       const image = /^\/api\/(spell|skin)s\/(\d{1,9})\/image$/.exec(path);
       if (image) {

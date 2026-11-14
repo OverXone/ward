@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import InvitationCards from "./components/InvitationCards.vue";
+import ModeSheet from "./components/ModeSheet.vue";
 import ChampSelectScreen from "./screens/ChampSelectScreen.vue";
 import LobbyScreen from "./screens/LobbyScreen.vue";
 import PairScreen from "./screens/PairScreen.vue";
@@ -45,13 +46,17 @@ const view = computed<View>(() => {
     case null:
       return { kind: "status", title: "League is starting…", spinner: true };
     case "None":
-      return { kind: "status", title: "Not in a lobby", sub: "Open a lobby on your PC, then control the queue from here.", emoji: "🎮" };
+      return { kind: "status", title: "Not in a lobby", sub: "Pick a game mode to open a lobby, or open one on your PC.", emoji: "🎮" };
     default:
       return { kind: "status", title: String(s.phase), emoji: "⏳" };
   }
 });
 
 const reconnecting = computed(() => app.paired && app.state && app.socket !== "open");
+
+// No lobby open: the phone can open one in any mode.
+const noLobby = computed(() => app.state?.lcu === "connected" && app.state.phase === "None");
+const choosingMode = ref(false);
 
 // Offered on the calm status screens (not mid champ select), where a stray tap can't cost anything.
 async function unpair() {
@@ -68,8 +73,10 @@ async function unpair() {
   />
   <PairScreen v-if="view.kind === 'pair'" />
   <StatusScreen v-else-if="view.kind === 'status'" :title="view.title" :sub="view.sub" :spinner="view.spinner" :emoji="view.emoji">
+    <button v-if="noLobby" class="btn btn-accept open-lobby" type="button" @click="choosingMode = true">Choose a game mode</button>
     <button v-if="app.paired && !app.pairing" class="unpair" type="button" @click="unpair">Unpair this phone</button>
   </StatusScreen>
+  <ModeSheet v-if="choosingMode && noLobby" :current-id="null" :party-size="1" @close="choosingMode = false" />
   <LobbyScreen v-else-if="view.kind === 'lobby'" :lobby="app.state!.lobby" />
   <QueueScreen v-else-if="view.kind === 'queue'" :queue="app.state!.queue" :queue-name="app.state!.lobby?.queueName ?? null" />
   <ReadyCheckScreen v-else-if="view.kind === 'ready'" :ready-check="app.state!.readyCheck!" />
@@ -80,6 +87,10 @@ async function unpair() {
 </template>
 
 <style>
+.open-lobby {
+  width: auto;
+  margin-top: 12px;
+}
 .unpair {
   margin-top: 28px;
   padding: 8px 12px;

@@ -8,6 +8,7 @@ import type {
   ChampionSummary,
   FriendOption,
   PhoneState,
+  QueueOption,
   ServerMessage,
   SkinOption,
   SpellOption,
@@ -121,6 +122,8 @@ export type ActionName =
   | "invitations/accept"
   | "invitations/decline"
   | "lobby/invite"
+  | "lobby/mode"
+  | "lobby/roles"
   | "chat/send";
 
 export async function action(name: ActionName, body?: Record<string, unknown>): Promise<void> {
@@ -155,6 +158,7 @@ async function getJson<T>(path: string): Promise<T> {
 }
 
 export const fetchFriends = () => getJson<FriendOption[]>("/api/friends");
+export const fetchQueues = () => getJson<QueueOption[]>("/api/queues");
 
 // ---------- images: fetched with the auth header, kept as blob: URLs ----------
 

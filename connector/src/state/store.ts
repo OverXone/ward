@@ -11,7 +11,7 @@ import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
 import { Handles } from "../handles";
 import { Chat, CHAT_CONVERSATIONS, chatRoomFor, type ChatMember, type ChatRoom } from "../chat";
-import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
+import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView, Role } from "../shared/phone-api";
 import { deriveChampSelect, describeMode, type LcuSession } from "./champ-select";
 
 export const URI = {
@@ -31,13 +31,23 @@ type Key = keyof typeof URI;
 export const WATCHED_URIS: ReadonlySet<string> = new Set(Object.values(URI));
 const KEY_BY_URI = new Map<string, Key>(Object.entries(URI).map(([k, v]) => [v, k as Key]));
 
-interface RawLobby {
+export interface RawLobby {
   canStartActivity?: boolean;
-  localMember?: { isLeader?: boolean; allowedInviteOthers?: boolean };
-  gameConfig?: { queueId?: number };
+  localMember?: {
+    isLeader?: boolean;
+    allowedInviteOthers?: boolean;
+    allowedChangeActivity?: boolean;
+    firstPositionPreference?: unknown;
+    secondPositionPreference?: unknown;
+  };
+  gameConfig?: { queueId?: number; showPositionSelector?: boolean; showQuickPlaySlotSelection?: boolean };
   members?: unknown[];
   multiUserChatId?: unknown;
 }
+
+const ROLE_SET: ReadonlySet<string> = new Set<Role>(["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "FILL", "UNSELECTED"]);
+/** League's role string, or UNSELECTED for anything else (empty, missing, unknown). */
+export const roleOf = (v: unknown): Role => (typeof v === "string" && ROLE_SET.has(v) ? (v as Role) : "UNSELECTED");
 
 interface RawSearch {
   searchState?: string;
@@ -121,7 +131,17 @@ export function deriveLobby(lobby: RawLobby | null, queueName: string | null): L
     memberCount: Array.isArray(lobby.members) ? lobby.members.length : 1,
     // Older clients don't send allowedInviteOthers; then only the leader is assumed to be allowed.
     canInvite: typeof lobby.localMember?.allowedInviteOthers === "boolean" ? lobby.localMember.allowedInviteOthers : !!lobby.localMember?.isLeader,
+    canChangeMode: canChangeMode(lobby),
+    showRoles: !!lobby.gameConfig?.showPositionSelector,
+    roles: [roleOf(lobby.localMember?.firstPositionPreference), roleOf(lobby.localMember?.secondPositionPreference)],
+    needsSlots: !!lobby.gameConfig?.showQuickPlaySlotSelection,
   };
+}
+
+/** Whether League lets me switch this lobby's mode. Clients without allowedChangeActivity: the leader only. */
+export function canChangeMode(lobby: RawLobby | null): boolean {
+  const me = lobby?.localMember;
+  return typeof me?.allowedChangeActivity === "boolean" ? me.allowedChangeActivity : !!me?.isLeader;
 }
 
 const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;

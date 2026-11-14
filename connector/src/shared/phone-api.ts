@@ -26,6 +26,11 @@ export type GameflowPhase =
   | "TerminatedInError"
   | (string & {});
 
+/** A lobby role as League names it. UNSELECTED = not chosen yet (also the second role when the first is FILL). */
+export type Role = "TOP" | "JUNGLE" | "MIDDLE" | "BOTTOM" | "UTILITY" | "FILL" | "UNSELECTED";
+/** The roles a player can choose, in League's order. */
+export const PICKABLE_ROLES: readonly Exclude<Role, "UNSELECTED">[] = ["TOP", "JUNGLE", "MIDDLE", "BOTTOM", "UTILITY", "FILL"];
+
 export interface LobbyView {
   queueId: number | null;
   queueName: string | null;
@@ -34,6 +39,25 @@ export interface LobbyView {
   memberCount: number;
   /** League lets me invite friends to this lobby. */
   canInvite: boolean;
+  /** League lets me switch this lobby to another game mode (the party leader). */
+  canChangeMode: boolean;
+  /** This mode asks each player for a first and second role. */
+  showRoles: boolean;
+  /** My first and second role. */
+  roles: [Role, Role];
+  /** This mode needs champion and role slots (Quickplay, Swiftplay), which only the PC sets. */
+  needsSlots: boolean;
+}
+
+/** A game mode I could switch my lobby to (GET /api/queues). */
+export interface QueueOption {
+  id: number;
+  name: string;
+  group: "PvP" | "Co-op vs AI" | "Teamfight Tactics";
+  /** League would let me (and my party) play it right now. */
+  canPick: boolean;
+  /** Why not, in a few words (null when canPick). */
+  reason: string | null;
 }
 
 export interface QueueView {
