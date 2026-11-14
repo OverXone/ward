@@ -8,6 +8,7 @@ import {
   cleanUpAfterUpdate,
   compareVersions,
   downloadUpdate,
+  freshUrl,
   parseManifest,
   signedMessage,
   swapInPlace,
@@ -79,6 +80,17 @@ describe("checkForUpdate", () => {
   it("says current for the same or an older release", async () => {
     expect(await check(fakeFetch(JSON.stringify(manifestFor(exe, "0.3.0"))))).toEqual({ kind: "current" });
     expect(await check(fakeFetch(JSON.stringify(manifestFor(exe, "0.2.0"))))).toEqual({ kind: "current" });
+  });
+
+  it("asks with a fresh query string each time, so GitHub's cache can't serve an old release", async () => {
+    const urls: string[] = [];
+    const recording = (async (url: string) => {
+      urls.push(url);
+      return new Response(JSON.stringify(manifestFor(exe, "0.4.0")));
+    }) as typeof fetch;
+    await checkForUpdate({ current: "0.3.0", fetch: recording, publicKey, url: "https://example.test/m.json" });
+    expect(urls[0]).toMatch(/^https:\/\/example\.test\/m\.json\?t=\d+$/);
+    expect(freshUrl("https://x.test/a?b=1", 5)).toBe("https://x.test/a?b=1&t=5");
   });
 
   it("says current when the latest release has no manifest (404)", async () => {

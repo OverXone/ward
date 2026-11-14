@@ -81,7 +81,16 @@ export function parseManifest(raw: unknown, publicKey = UPDATE_PUBLIC_KEY): Upda
 }
 
 function headers(current: string): Record<string, string> {
-  return { "User-Agent": `Ward/${current}`, Accept: "application/octet-stream, application/json" };
+  return { "User-Agent": `Ward/${current}` };
+}
+
+/**
+ * GitHub's edge caches where "releases/latest" points, separately per request, and right after a
+ * release is published some caches kept pointing at the previous one. A query string GitHub
+ * ignores gives each check its own cache entry, so it always sees the current latest release.
+ */
+export function freshUrl(url: string, now = Date.now()): string {
+  return `${url}${url.includes("?") ? "&" : "?"}t=${now}`;
 }
 
 export type CheckResult =
@@ -98,7 +107,7 @@ export async function checkForUpdate(opts: {
 }): Promise<CheckResult> {
   const doFetch = opts.fetch ?? fetch;
   try {
-    const res = await doFetch(opts.url ?? MANIFEST_URL, {
+    const res = await doFetch(freshUrl(opts.url ?? MANIFEST_URL), {
       headers: headers(opts.current),
       signal: AbortSignal.timeout(CHECK_TIMEOUT_MS),
     });
