@@ -25,7 +25,7 @@ import { createHttpServer, expectedHost } from "./server/http";
 import { isPrivateIPv4, lanCandidates } from "./server/net";
 import { attachPhoneSocket } from "./server/phone-ws";
 
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 const DEFAULT_PORT = 47800;
 
 const HELP = `Ward ${VERSION}: control the League client from your phone (same Wi-Fi).
