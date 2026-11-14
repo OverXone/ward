@@ -2,6 +2,7 @@
 
 Control your League of Legends client from your phone over your home Wi-Fi. Step away from your desk without missing the queue pop. From the phone you can:
 - accept or decline ready checks
+- choose the game mode (or open a lobby) and pick your two roles
 - start or cancel the queue
 - hover, ban and lock in champions
 - in ARAM, reroll and swap with the bench; in modes that offer you a few champions, pick one of them
@@ -38,6 +39,7 @@ Good to know:
 - **ARAM:** a **Bench** panel lists the bench champions (tap one to swap) and a **Reroll** button shows how many rerolls you have left. When League offers you only a few champions, the phone shows just those as big tiles.
 - **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own.
 - **Runes** aren't on the phone; set them in the PC client or with a tool like Mobalytics. (The last version with a rune page picker is tagged `with-runes` in git.)
+- **Game mode and roles:** in the lobby, the party leader taps the mode name to switch to another mode; modes your party can't play are greyed out with the reason. With no lobby open, **Choose a game mode** opens one. In Draft and Ranked, tap **First role** or **Second role** to pick (choosing the other slot's role swaps them; Fill needs no second role). Quickplay and Swiftplay champion picks are set on the PC.
 - **Invitations:** when someone invites you, a card with **Join** and **Decline** appears on every screen. In your lobby, **Invite friends** lists friends who are online in League.
 - **Chat:** in the lobby and while queued, **Lobby chat** shows the latest message; in champ select, the chat button sits next to the timer. A red number counts unread messages and the phone buzzes briefly when a teammate writes. Messages are up to 200 characters. In champ select, teammates whose names League hides show as "Ally 2" and so on, the same as in the team list.
 - **Don't show the window on stream or screen share.** Until it's used, the QR code signs in whoever scans it on your Wi-Fi.
