@@ -21,16 +21,17 @@ There's no cloud and no accounts. Everything stays on your local network. The on
    - **"Windows protected your PC" (SmartScreen):** click **More info**, then **Run anyway**. It appears because the exe isn't code-signed.
    - **Windows Firewall:** the app shows up as **Ward**. Tick **Private networks** only and **untick Public networks**, then click **Allow**. Your phone can't connect without this.
 3. **Connect your phone** (same Wi-Fi as the PC). You only do this once per phone:
-   - **Scan the QR code** in the window with your phone camera. That signs the phone in, with nothing to type. Or
-   - open the address the window shows (like `http://192.168.1.20:47800`) and type the 8-character code.
+   - **Scan the QR code** in the Ward window with your phone camera. That signs the phone in, with nothing to type. Or
+   - open the address the window shows (like `http://192.168.1.20:47800`) on the phone and type the 8-character code.
 4. **That's it.** Once your phone is paired, the window hides and Ward keeps running in the tray (the icon near the clock). Start League whenever you like; Ward finds it on its own.
 
 Good to know:
-- **Ward lives in the tray.** Closing the window doesn't quit Ward; it keeps running in the background so your phone stays connected. Click the Ward icon in the tray to open the window again, or right-click it and choose **Quit Ward**. You can also type `quit` or press Ctrl+C in the window. Windows 11 may hide new tray icons behind the **^** arrow next to the clock; drag the Ward icon onto the taskbar to keep it in sight. Double-clicking `Ward.exe` while it's running just opens its window. The tray icon is drawn by Windows PowerShell, so Windows may list it under that name in its notification settings. If the tray icon can't be shown, closing the window quits Ward, as in older versions. To run Ward in its window only, without the tray, start it with `Ward.exe --no-tray`.
-- **Ward updates itself.** Each time you start it, it checks GitHub for a newer version. If there is one, it downloads it, replaces `Ward.exe` and restarts. Phones reconnect and load the new version by themselves. While it runs, it checks every few hours and tells you when an update is out: type `update` in the window, or right-click the tray icon and choose **Update**. Every update is signed, and Ward installs only files signed with its release key. To turn this off, start it with `Ward.exe --no-update-check`. Versions before 0.4.0 don't update themselves, so download 0.4.0 once by hand.
-- **The PC remembers your phone.** After you pair once, the phone connects by itself every time you start Ward. The window lists remembered phones at startup. To remove one, type `forget 1` (its number) or `forget all` in the window, or tap **Unpair this phone** on the phone. A phone that hasn't connected for 30 days is forgotten.
-- **Pairing another phone:** the QR code works once, and the typed code works once for 5 minutes. Press **Enter** in the window for new ones. Type `phones` to list remembered phones.
-- **If your PC's address changes** (rare: your router usually gives the PC the same one each time), the window says so. Scan the QR code once more, and add the home-screen icon again, because the old icon points to the old address.
+- **Ward lives in the tray.** Closing the Ward window doesn't quit Ward; it keeps running in the background so your phone stays connected. Click the Ward icon in the tray to open the window again, or right-click it and choose **Quit Ward** (the window has a **Quit Ward** button too). Windows 11 may hide new tray icons behind the **^** arrow next to the clock; drag the Ward icon onto the taskbar to keep it in sight. Double-clicking `Ward.exe` while it's running just opens its window.
+- **The window and tray icon come from a small helper**, `ward-tray-….exe`, that Ward unpacks into `%APPDATA%Ward` when it starts. If your antivirus blocks it, Ward still runs with a plain tray icon: clicking it shows the address and a pairing code in a notification.
+- **Ward updates itself.** Each time you start it, it checks GitHub for a newer version. If there is one, it downloads it, replaces `Ward.exe` and restarts. Phones reconnect and load the new version by themselves. While it runs, it checks every few hours and tells you when an update is out: click **Update** in the Ward window, or right-click the tray icon and choose **Update**. Every update is signed, and Ward installs only files signed with its release key. To turn this off, start it with `Ward.exe --no-update-check`. Versions before 0.4.0 don't update themselves, so download 0.4.0 once by hand.
+- **The PC remembers your phone.** After you pair once, the phone connects by itself every time you start Ward. The Ward window lists them under **Paired phones**. To remove one, select it and click **Forget this phone** (or **Forget all**), or tap **Unpair this phone** on the phone. A phone that hasn't connected for 30 days is forgotten.
+- **Pairing another phone:** the QR code works once, and the typed code works once for 5 minutes. Click **New QR code** in the Ward window for new ones; after a phone pairs, the window shows fresh ones by itself.
+- **If your PC's address changes** (rare: your router usually gives the PC the same one each time), the Ward window's activity log says so. Scan the QR code once more, and add the home-screen icon again, because the old icon points to the old address.
 - **Add it to your home screen** (browser menu, "Add to Home Screen") so it opens like an app. On iPhone the icon doesn't share Safari's login, so open the icon and type the code there once.
 - **Favorite champions:** long-press a champion in the grid to star it. When you're picking, starred champions come first.
 - **Swaps:** a teammate's swap request pops up with Accept and Decline. To ask someone, tap a teammate with the ⇄ badge.
@@ -51,8 +52,8 @@ Good to know:
 - Type `http://`, not `https://`. The connector logs a warning when a phone tries `https`.
 - The phone must be on the same home Wi-Fi (not guest Wi-Fi, not mobile data).
 - **Brave:** allow the site's local network permission when Brave asks (or in the site settings).
-- **PC with several networks** (VPN, virtual adapters): the window lists the other addresses it found. Start it from a terminal with `Ward.exe --host <ip>` to pick one.
-- The connector logs every connection attempt and every refused request, so check its window.
+- **PC with several networks** (VPN, virtual adapters): the activity log lists the other addresses it found. To pick one, make a shortcut to `Ward.exe` and add ` --host <ip>` to its target.
+- Ward logs every connection attempt and every refused request in the Ward window's activity log, so check there.
 
 ## Developer quick start
 
@@ -87,15 +88,14 @@ While `watch:web` is running, reloading the page on the phone picks up a fresh b
 
 The connector prints a QR code and a pairing code. Your phone must be on the same Wi-Fi.
 - **Scan the QR code** with your phone camera. The link carries a one-time ticket after `#` (`/#p=…`), which the phone trades for its own key. Or
-- **open `http://<pc-ip>:47800`** on the phone and type the 8-character code. The code works once and lasts 5 minutes; press Enter in the connector window for a new one.
+- **open `http://<pc-ip>:47800`** on the phone and type the 8-character code. The code works once and lasts 5 minutes; press Enter in the console for a new one.
 
-Each paired phone gets its own random key. The connector saves only a SHA-256 hash of it, in `%APPDATA%\Ward\phones.json`. Set `WARD_DATA_DIR` to use another folder (the smoke test does). Commands in the window: Enter (new QR code and code), `phones`, `forget <number>`, `forget all`, `update`, `quit`.
+Each paired phone gets its own random key. The connector saves only a SHA-256 hash of it, in `%APPDATA%\Ward\phones.json`. Set `WARD_DATA_DIR` to use another folder (the smoke test does). Run from source, Ward is a console program; commands in the console: Enter (new QR code and code), `phones`, `forget <number>`, `forget all`, `quit`.
 
-`Ward.exe` runs in two parts, because Windows ends a console program a few seconds after its window is closed, whatever the program does. The background Ward (started with `--background`, no window) runs the phone server, the League connection and the tray icon. Each window is a separate `Ward.exe` that shows the background Ward's output and passes typed commands to it, over a named pipe whose name and secret are in `%APPDATA%\Ward\instance.json`. See `connector/src/instance.ts` and `connector/src/tray.ts`. Run from source (`npm run dev`), Ward is one console program without a tray icon.
+`Ward.exe` is a Windows app with no console. One process runs the phone server and the League connection. The tray icon and the Ward window are drawn by a small helper, `tray/WardTray.cs`, which the exe build compiles with the C# compiler that ships with Windows and packs into `Ward.exe`; Ward unpacks it into the data folder and talks to it over its stdin/stdout (`connector/src/tray.ts`). If the helper can't run, a Windows PowerShell script draws a plain tray icon instead. Starting `Ward.exe` again tells the running Ward to show its window, over a named pipe whose name and secret are in `%APPDATA%Wardinstance.json` (`connector/src/instance.ts`). Run from source (`npm run dev`), Ward is one console program without a tray icon or window.
 
 Options:
 - `--no-update-check` doesn't look for updates (only `Ward.exe` updates itself; from source it never does).
-- `--no-tray` runs `Ward.exe` in its window only, like older versions: closing the window quits it.
 - `--host <ip>` picks the network adapter.
 - `--port <n>` changes the port (default 47800).
 - `--league-dir <dir>` uses only the lockfile in that folder.
@@ -108,7 +108,7 @@ When run from source, the firewall prompt and rule are for `node.exe` instead. A
 npm run build:exe      # -> dist/Ward.exe
 ```
 
-This builds the phone UI and bundles the connector with esbuild. Then it embeds both into a copy of your `node.exe` as a Node single executable application (SEA). Before that, `resedit` replaces the copy's version info and icon, so Windows shows "Ward" instead of "Node.js JavaScript Runtime". It also drops Node's code signature, which the injection would break anyway. Build on Windows with Node 24. The exe isn't signed.
+This builds the phone UI and bundles the connector with esbuild. Then it embeds both into a copy of your `node.exe` as a Node single executable application (SEA). Before that, `resedit` replaces the copy's version info and icon, so Windows shows "Ward" instead of "Node.js JavaScript Runtime". It also drops Node's code signature, which the injection would break anyway. The build also compiles the tray and window helper (`tray/WardTray.cs`) with `csc.exe` from .NET Framework 4, which every Windows 10/11 has, and embeds it too. Last, it marks `Ward.exe` as a Windows app instead of a console program, so double-clicking it opens no console. Build on Windows with Node 24. The exe isn't signed.
 
 ### Release a version
 

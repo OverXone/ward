@@ -5,7 +5,8 @@
  *
  * 1. vite build          -> web/dist
  * 2. esbuild             -> build/connector.cjs (one CommonJS file, as Node SEA requires)
- * 3. sea-config.json     -> the script plus every web/dist file as a SEA asset (read with sea.getAsset)
+ *    csc (.NET Framework, ships with Windows) -> build/ward-tray.exe, the tray icon helper (tray/WardTray.cs)
+ * 3. sea-config.json     -> the script, the tray helper and every web/dist file as SEA assets (sea.getAsset)
  * 4. node --experimental-sea-config -> build/sea-prep.blob
  * 5. copy node.exe with Ward's version info and icon (resedit), postject the blob in -> dist/Ward.exe
  */
@@ -99,6 +100,34 @@ await build({
   logLevel: "warning",
 });
 
+step("Compiling the tray icon helper");
+// The C# compiler of .NET Framework 4, which every Windows 10/11 has (and so do GitHub's runners).
+const csc = path.join(process.env.SystemRoot || "C:\\Windows", "Microsoft.NET", "Framework64", "v4.0.30319", "csc.exe");
+const trayExe = path.join(out, "ward-tray.exe");
+const trayIcon = path.join(out, "ward.ico");
+const trayVersion = path.join(out, "TrayVersion.cs");
+writeFileSync(trayIcon, ico());
+writeFileSync(
+  trayVersion,
+  `[assembly: System.Reflection.AssemblyVersion("${version}.0")]\n[assembly: System.Reflection.AssemblyFileVersion("${version}.0")]\n`,
+);
+execFileSync(
+  csc,
+  [
+    "/nologo",
+    "/target:winexe",
+    "/optimize+",
+    `/out:${trayExe}`,
+    `/win32icon:${trayIcon}`,
+    "/r:System.Windows.Forms.dll",
+    "/r:System.Drawing.dll",
+    path.join(root, "tray", "WardTray.cs"),
+    trayVersion,
+  ],
+  { stdio: "inherit" },
+);
+console.log(`  ${(statSync(trayExe).size / 1024).toFixed(0)} KB`);
+
 step("Writing the SEA config");
 function walk(dir, base = dir, files = []) {
   for (const name of readdirSync(dir)) {
@@ -111,7 +140,7 @@ function walk(dir, base = dir, files = []) {
 const uiFiles = walk(webDist);
 if (!uiFiles.includes("index.html")) throw new Error("web/dist/index.html is missing; the UI build failed.");
 writeFileSync(path.join(out, "ui-manifest.json"), JSON.stringify(uiFiles));
-const assets = { "ui-manifest.json": path.join(out, "ui-manifest.json") };
+const assets = { "ui-manifest.json": path.join(out, "ui-manifest.json"), "ward-tray.exe": trayExe };
 for (const rel of uiFiles) assets[`ui/${rel}`] = path.join(webDist, rel);
 writeFileSync(
   path.join(out, "sea-config.json"),
@@ -149,6 +178,18 @@ execFileSync(
   ],
   { stdio: "inherit" },
 );
+
+step("Making Ward.exe a Windows app (no console window; the Ward window comes from the tray helper)");
+{
+  const body = readFileSync(exe);
+  const pe = body.readUInt32LE(0x3c);
+  if (body.toString("latin1", pe, pe + 4) !== "PE\0\0") throw new Error("Ward.exe isn't a PE file");
+  // IMAGE_OPTIONAL_HEADER.Subsystem, at the same offset in PE32 and PE32+: 3 = console, 2 = GUI.
+  const subsystem = pe + 24 + 68;
+  if (body.readUInt16LE(subsystem) !== 3) throw new Error("Ward.exe isn't a console program as expected");
+  body.writeUInt16LE(2, subsystem);
+  writeFileSync(exe, body);
+}
 
 const mb = (statSync(exe).size / 1024 / 1024).toFixed(0);
 console.log(`\nDone: ${path.relative(root, exe)} (${mb} MB)`);

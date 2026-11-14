@@ -4,11 +4,11 @@
  *   ward                 run the LAN server for the phone
  *   ward --events        test mode: print LCU events, no server
  *
- * Options: --host <lan-ip>  --port <n>  --league-dir <path>  --no-update-check  --no-tray  --all  --dump  --help
+ * Options: --host <lan-ip>  --port <n>  --league-dir <path>  --no-update-check  --all  --dump  --help
  *
- * Ward.exe runs in the background with a tray icon, and its console window only shows it (see
- * instance.ts for why). Double-clicking Ward.exe starts the background Ward if it isn't running
- * and opens a window on it. Run from source, or with --no-tray, it's one plain console program.
+ * Ward.exe is a Windows app (no console): it runs the phone server and the League connection, and
+ * the Ward tray helper (tray/WardTray.cs) draws the tray icon and the Ward window. Starting it again
+ * shows the running Ward's window (instance.ts). Run from source, Ward is a plain console program.
  */
 
 import { rmSync } from "node:fs";
@@ -21,10 +21,10 @@ import QRCode from "qrcode";
 import { Champions } from "./champions";
 import { CHAT_CONVERSATIONS } from "./chat";
 import { runEventsMode } from "./cli/events";
-import { connectToInstance, ControlServer, runViewer, type Viewer, waitForInstance } from "./instance";
+import { connectToInstance, ControlServer } from "./instance";
 import { LcuManager } from "./lcu/manager";
 import { Loadout } from "./loadout";
-import { addSecret, log, redact, setLogSink } from "./log";
+import { addSecret, log, setLogSink } from "./log";
 import { WATCHED_URIS, Store } from "./state/store";
 import { staticFiles } from "./server/assets";
 import { FailureLimiter, formatCode, Pairing } from "./server/auth";
@@ -38,7 +38,6 @@ import {
   cleanUpAfterUpdate,
   downloadUpdate,
   JUST_UPDATED_ENV,
-  openInNewWindow,
   startInBackground,
   swapInPlace,
   type UpdateManifest,
@@ -62,7 +61,6 @@ Usage: ward [options]
   --port <n>          Port to listen on (default ${DEFAULT_PORT})
   --league-dir <dir>  Use only the lockfile in this folder (skip process detection)
   --no-update-check   Don't check GitHub for a newer Ward (Ward.exe only)
-  --no-tray           Run in this window only, without the tray icon (Ward.exe only)
   -h, --help          Show this help
 `;
 
@@ -96,10 +94,6 @@ interface Out {
 
 /** This console, or (in the background Ward) every open window. */
 const everyone: Out = { plain: (text, raw) => log.plain(text, raw) };
-
-function windowOut(v: Viewer): Out {
-  return { plain: (text, raw = false) => v.print(raw ? text : redact(text)) };
-}
 
 function ago(t: number): string {
   const days = Math.floor((Date.now() - t) / 86_400_000);
@@ -169,26 +163,6 @@ async function installUpdate(
   return true;
 }
 
-/** Restarts in a new console window (the current one closes). */
-function restartInNewWindow(version: string): boolean {
-  const args = process.argv.slice(2).filter((a) => a !== "--background" && a !== "--attach");
-  if (!openInNewWindow(process.execPath, args, { [JUST_UPDATED_ENV]: version })) return false;
-  log.plain(`  Updated to Ward ${version}. Restarting in a new window...`);
-  process.exit(0);
-}
-
-/** Checked once before the server starts, so updating never interrupts a connected phone. */
-async function updateAtStartup(): Promise<boolean> {
-  log.plain(`  Ward ${VERSION}: checking for updates...`);
-  const result = await checkForUpdate({ current: VERSION });
-  if (result.kind === "error") {
-    log.plain(`  Couldn't check for updates (${result.message}). Starting anyway.`);
-    return false;
-  }
-  if (result.kind === "current") return false;
-  return installUpdate(result.manifest, () => {}, restartInNewWindow);
-}
-
 interface ServerOptions {
   host?: string;
   port: number;
@@ -215,6 +189,13 @@ interface WardServer {
   command(line: string, out: Out): void;
   update(out: Out): Promise<void>;
   stop(): void;
+  /** For the Ward app window: a fresh QR link and pairing code (the old ones stop working). */
+  newPairing(): { url: string; base: string; code: string };
+  phones(): readonly Phone[];
+  /** Other LAN addresses, and a note if remembered phones must scan again (shown once). */
+  notes(): string[];
+  /** Starts looking for League (the banner does this in console windows). */
+  startLeague(): void;
 }
 
 /** The phone server and the League connection. Prints through `log` (console or windows). */
@@ -328,10 +309,23 @@ function startServer(opts: ServerOptions, hooks: ServerHooks): WardServer {
         `  This PC's address changed (it was ${previousAddress}), so these phones need to scan the QR code once more.`,
       );
     out.plain(`  ${hooks.footer}\n`);
-    if (!managerStarted) {
-      managerStarted = true;
-      manager.start();
-    }
+    startLeague();
+  };
+
+  const startLeague = () => {
+    if (managerStarted) return;
+    managerStarted = true;
+    manager.start();
+  };
+
+  const newPairing = () => ({ url: `${base}/#p=${newTicket()}`, base, code: formatCode(pairing.issue()) });
+
+  const notes = (): string[] => {
+    const out: string[] = [];
+    if (others.length) out.push(`Other LAN addresses found: ${others.join(", ")} (start Ward with --host to pick one).`);
+    if (devices.list().length && previousAddress && `http://${previousAddress}` !== base)
+      out.push(`This PC's address changed (it was ${previousAddress}), so paired phones need to scan the QR code once more.`);
+    return out;
   };
 
   const stop = () => {
@@ -408,10 +402,20 @@ function startServer(opts: ServerOptions, hooks: ServerHooks): WardServer {
     void printPairing(out, base, newTicket(), pairing.issue()).then(() => out.plain(""));
   };
 
-  return { listening, banner, command, update, stop };
+  return {
+    listening,
+    banner,
+    command,
+    update,
+    stop,
+    newPairing,
+    phones: () => devices.list(),
+    notes,
+    startLeague,
+  };
 }
 
-/** One plain console program: from source, with --no-tray, or if the background Ward can't start. */
+/** One plain console program: Ward run from source (npm run dev). */
 function runInConsole(opts: ServerOptions): void {
   let rl: readline.Interface | null = null;
   const shutdown = () => {
@@ -424,10 +428,7 @@ function runInConsole(opts: ServerOptions): void {
     footer: 'Keep this window open while you play. Type "phones" to list phones, Ctrl+C to quit.',
     onPaired: () => {},
     onUpdateAvailable: () => {},
-    restart: (version) => {
-      rl?.close();
-      return restartInNewWindow(version);
-    },
+    restart: () => false, // run from source, Ward never updates itself
     quit: shutdown,
   });
   void server.listening.then(() => server.banner(everyone));
@@ -439,176 +440,167 @@ function runInConsole(opts: ServerOptions): void {
   process.on("SIGTERM", shutdown);
 }
 
+/** The tray helper exe built into Ward.exe (scripts/build-exe.mjs), if there is one. */
+function trayHelper(): Buffer | undefined {
+  try {
+    return sea.isSea() ? Buffer.from(sea.getAsset("ward-tray.exe")) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
- * The background Ward: no window of its own. It shows a tray icon, and everything it prints goes
- * to the open Ward windows. Windows can come and go; closing them keeps Ward running.
+ * Ward.exe as a Windows app (local test build: the exe has no console). One process runs the phone
+ * server and the League connection; the Ward tray helper draws the tray icon and the Ward window.
+ * Starting Ward.exe again only shows the window of the Ward that's running.
  */
-async function runInBackground(opts: ServerOptions): Promise<void> {
+async function runApp(opts: ServerOptions): Promise<void> {
   const dataDir = defaultDataDir();
+  const running = await connectToInstance(dataDir);
+  if (running) {
+    running.end(JSON.stringify({ t: "show" }) + "\n");
+    setTimeout(() => process.exit(0), 300);
+    return;
+  }
   let control: ControlServer;
   try {
     control = await ControlServer.start(dataDir);
   } catch {
-    process.exit(1); // the window waiting for us falls back to running Ward itself
+    process.exit(1);
   }
 
-  // Windows opened later get the last few log lines, then a fresh banner.
-  const recent: string[] = [];
-  setLogSink((text, kind) => {
-    if (kind !== "plain") {
-      recent.push(text);
-      if (recent.length > 15) recent.shift();
-    }
-    control.broadcast(text);
+  // Others connect as soon as the pipe is open, before the window exists: hold their requests.
+  let windowReady = false;
+  const beforeReady: Array<() => void> = [];
+  const whenWindowReady = (fn: () => void) => (windowReady ? fn() : beforeReady.push(fn));
+  control.on("viewer", (v) => {
+    // Ward.exe started again asks for the window right after connecting. Anything else is a console
+    // window of Ward 0.4.x reconnecting after it updated to this version: close it (it exits when
+    // told to hide) and show the Ward window instead.
+    let asked = false;
+    v.on("show", () => {
+      asked = true;
+      whenWindowReady(() => showWindow());
+    });
+    setTimeout(() => {
+      if (asked) return;
+      v.hide();
+      whenWindowReady(() => showWindow());
+    }, 1500);
   });
-
-  let dying = false;
-  let leaving = false; // quitting or restarting: windows closing is expected
-  let tray: Tray | null = null;
-  onFatal = (message) => {
-    log.error(message);
-    dying = true;
-    for (const v of control.viewers) v.bye("", true);
-    // Give a window that is still connecting a moment to show the error.
-    setTimeout(
-      () => {
-        tray?.dispose();
-        control.close();
-        process.exit(1);
-      },
-      control.viewers.size ? 500 : 5000,
-    );
-  };
 
   const exe = process.execPath;
   cleanUpAfterUpdate(exe);
-  if (process.env[JUST_UPDATED_ENV]) log.info(`Ward updated to ${VERSION}.`);
+  const started = await Tray.start({ exe, dataDir, helper: trayHelper() });
+  if (!started) process.exit(1); // nothing could show Ward; don't run invisibly
+  const tray = started;
+  tray.title(`Ward ${VERSION}`);
+  setLogSink((text) => tray.log(text.split("\n").map((l) => l.trim()).join("\n")));
 
-  tray = await Tray.start({ exe, dataDir });
-  if (!tray) log.warn("Couldn't show the tray icon, so closing the window quits Ward.");
-
+  let leaving = false;
+  let dying = false;
   const shutdown = () => {
     if (leaving) return;
     leaving = true;
-    log.info("Shutting down.");
-    for (const v of control.viewers) v.bye("  Ward has quit.");
-    server.stop();
-    tray?.dispose();
+    server?.stop();
+    tray.dispose();
     control.close();
     setTimeout(() => process.exit(0), 300);
   };
+  onFatal = (message) => {
+    log.error(message);
+    dying = true;
+    tray.show();
+    tray.notify("Ward stopped", message);
+  };
+  const restart = (version: string): boolean => {
+    leaving = true;
+    log.plain(`Updated to Ward ${version}. Restarting...`);
+    tray.dispose();
+    control.close();
+    startInBackground(exe, process.argv.slice(2), { [JUST_UPDATED_ENV]: version });
+    setTimeout(() => process.exit(0), 300);
+    return true;
+  };
 
-  const openWindow = () => {
-    const first = [...control.viewers][0];
-    if (first && tray) tray.focus(first.pid);
-    else openInNewWindow(exe, ["--attach"]);
+  tray.show();
+  if (process.env[JUST_UPDATED_ENV]) log.info(`Ward updated to ${VERSION}.`);
+  else if (opts.updates) {
+    log.info("Checking for updates...");
+    const result = await checkForUpdate({ current: VERSION });
+    if (result.kind === "error") log.info(`Couldn't check for updates (${result.message}).`);
+    else if (result.kind === "update" && (await installUpdate(result.manifest, () => {}, restart))) return;
+  }
+
+  let server: WardServer | null = null;
+  const sendPairing = async () => {
+    if (!server) return;
+    const p = server.newPairing();
+    if (!tray.hasWindow) {
+      // No Ward window (the helper was blocked, e.g. by antivirus): give the code in a notification.
+      log.warn(`Ward's window couldn't open. To pair a phone, open ${p.base} on it and enter ${p.code}.`);
+      tray.notify(`Pairing code ${p.code}`, `Ward's window couldn't open. On your phone, open ${p.base} and enter the code. Click the Ward icon for a new code.`);
+      return;
+    }
+    const png = await QRCode.toBuffer(p.url, { type: "png", margin: 2, scale: 1, errorCorrectionLevel: "L" });
+    tray.pairing(png, p.base, p.code);
+  };
+  const sendPhones = () => {
+    if (server) tray.phones(server.phones().map((p) => ({ name: p.name, lastUsed: ago(p.lastSeenAt) })));
+  };
+  const showWindow = () => {
+    if (!tray.hasWindow) return void sendPairing();
+    sendPhones();
+    tray.show();
   };
 
   let toldAboutTray = false;
-  let hiding = false;
-
-  const server = startServer(opts, {
-    footer: tray
-      ? 'Closing this window keeps Ward running in the tray. Type "phones" to list phones, "quit" or Ctrl+C to quit.'
-      : 'Keep this window open while you play. Type "phones" to list phones, "quit" or Ctrl+C to quit.',
+  server = startServer(opts, {
+    footer: "",
     onPaired: () => {
-      if (!tray || !control.viewers.size) return;
+      sendPhones();
+      if (!tray.hasWindow) return;
+      void sendPairing(); // the QR code on screen was used up
       setTimeout(() => {
-        if (!tray || leaving) return;
-        hiding = true;
-        for (const v of control.viewers) v.hide();
-        setTimeout(() => (hiding = false), 2000);
+        if (leaving || dying) return;
+        tray.hide();
         toldAboutTray = true;
         tray.notify("Ward is running in the tray", "Your phone is paired. Click the Ward icon to open the window again.");
       }, HIDE_AFTER_PAIRING_MS);
     },
     onUpdateAvailable: (version) => {
-      tray?.setUpdate(version);
-      tray?.notify(`Ward ${version} is available`, "Right-click the Ward icon and choose Update.");
+      tray.setUpdate(version);
+      tray.notify(`Ward ${version} is available`, "Open Ward and click Update, or right-click the Ward icon.");
     },
-    restart: (version) => {
-      leaving = true;
-      log.plain(`  Updated to Ward ${version}. Restarting...`);
-      // No goodbye: the windows wait for the new Ward and reconnect to it.
-      for (const v of control.viewers) v.drop();
-      tray?.dispose();
-      control.close();
-      startInBackground(exe, process.argv.slice(2), { [JUST_UPDATED_ENV]: version });
-      setTimeout(() => process.exit(0), 300);
-      return true;
-    },
+    restart,
     quit: shutdown,
   });
-
-  let listening = false;
-  const welcomed = new WeakSet<Viewer>();
-  const welcome = (v: Viewer) => {
-    if (welcomed.has(v)) return;
-    welcomed.add(v);
-    void server.banner(windowOut(v));
-  };
-  void server.listening.then(() => {
-    listening = true;
-    for (const v of control.viewers) welcome(v);
+  void server.listening.then(async () => {
+    await sendPairing();
+    sendPhones();
+    for (const note of server?.notes() ?? []) log.info(note);
+    server?.startLeague();
   });
 
-  control.on("viewer", (v) => {
-    for (const line of recent) v.print(line);
-    if (dying) return v.bye("", true);
-    if (listening) welcome(v);
-    v.on("line", (line) => server.command(line, windowOut(v)));
-    v.on("quit", shutdown);
-    v.on("close", () => {
-      if (leaving || dying || control.viewers.size) return;
-      // Without a tray icon there'd be no way back to Ward, so closing the window quits it, as before.
-      if (!tray) return shutdown();
-      if (!hiding && !toldAboutTray) {
-        toldAboutTray = true;
-        tray.notify("Ward is still running", "It keeps your phone connected. Click the Ward icon to open it, or right-click it to quit.");
-      }
-    });
+  tray.on("open", showWindow);
+  tray.on("openNew", showWindow);
+  tray.on("newQr", () => void sendPairing());
+  tray.on("forget", (which) => {
+    server?.command(which === "all" ? "forget all" : `forget ${which}`, everyone);
+    sendPhones();
   });
-
-  tray?.on("open", openWindow);
-  tray?.on("openNew", () => openInNewWindow(exe, ["--attach"]));
-  tray?.on("update", () => void server.update(everyone));
-  tray?.on("quit", shutdown);
-  tray?.on("gone", () => {
-    tray = null;
-    log.warn("The tray icon stopped, so closing the window quits Ward.");
-    if (!control.viewers.size) shutdown();
+  tray.on("update", () => void server?.update(everyone));
+  tray.on("quit", shutdown);
+  tray.on("gone", shutdown);
+  tray.on("closed", () => {
+    if (dying) return shutdown();
+    if (toldAboutTray) return;
+    toldAboutTray = true;
+    tray.notify("Ward is still running", "It keeps your phone connected. Click the Ward icon to open it, or right-click it to quit.");
   });
+  windowReady = true;
+  for (const fn of beforeReady.splice(0)) fn();
   process.on("SIGTERM", shutdown);
-}
-
-/** This process is a Ward window: start the background Ward if needed and show it. */
-async function runWindow(opts: ServerOptions, attachOnly: boolean): Promise<boolean> {
-  process.title = "Ward";
-  const dataDir = defaultDataDir();
-  const running = await connectToInstance(dataDir);
-  if (running) {
-    runViewer(running, dataDir);
-    return true;
-  }
-  if (attachOnly) {
-    exitWithError("Ward isn't running. Start Ward.exe.");
-    return true;
-  }
-
-  cleanUpAfterUpdate(process.execPath);
-  const justUpdated = process.env[JUST_UPDATED_ENV];
-  if (justUpdated) log.plain(`  Ward updated to ${VERSION}.`);
-  else if (opts.updates && (await updateAtStartup())) return true;
-
-  log.plain("  Starting Ward...");
-  startInBackground(process.execPath, [...process.argv.slice(2), "--background"]);
-  const socket = await waitForInstance(dataDir, 20_000);
-  if (socket) {
-    runViewer(socket, dataDir);
-    return true;
-  }
-  log.warn("Ward couldn't start in the background, so it runs in this window instead.");
-  return false;
 }
 
 async function main(): Promise<void> {
@@ -623,10 +615,11 @@ async function main(): Promise<void> {
         port: { type: "string" },
         "league-dir": { type: "string" },
         "no-update-check": { type: "boolean" },
-        "no-tray": { type: "boolean" },
-        // Internal: the background Ward, and a window opened from the tray.
+        // Passed by Ward 0.4.x when it restarts after updating; ignored now (and accepted so
+        // that restart works). --no-tray and --attach were 0.4.x options too.
         background: { type: "boolean" },
         attach: { type: "boolean" },
+        "no-tray": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
       strict: true,
@@ -659,14 +652,8 @@ async function main(): Promise<void> {
     updates: sea.isSea() && !values["no-update-check"],
   };
 
-  if (values.background) return runInBackground(opts);
-  if (sea.isSea() && !values["no-tray"]) {
-    if (await runWindow(opts, !!values.attach)) return;
-  } else {
-    if (sea.isSea()) cleanUpAfterUpdate(process.execPath);
-    if (process.env[JUST_UPDATED_ENV]) log.plain(`  Ward updated to ${VERSION}.`);
-    else if (opts.updates && (await updateAtStartup())) return;
-  }
+  // Ward.exe is a Windows app with its own window; run from source, Ward is a console program.
+  if (sea.isSea()) return runApp(opts);
   runInConsole(opts);
 }
 

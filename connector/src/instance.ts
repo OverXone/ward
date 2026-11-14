@@ -21,7 +21,6 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import net from "node:net";
 import path from "node:path";
-import readline from "node:readline";
 
 export interface InstanceInfo {
   pid: number;
@@ -80,6 +79,8 @@ function write(socket: net.Socket, msg: object): void {
 export interface ViewerEvents {
   line: [line: string];
   quit: [];
+  /** Ward.exe was started again: show the Ward app window. */
+  show: [];
   close: [];
 }
 
@@ -169,6 +170,7 @@ export class ControlServer extends EventEmitter<ControlEvents> {
       }
       if (msg.t === "line" && typeof msg.line === "string") viewer.emit("line", msg.line.slice(0, MAX_LINE));
       else if (msg.t === "quit") viewer.emit("quit");
+      else if (msg.t === "show") viewer.emit("show");
     });
     socket.on("close", () => {
       clearTimeout(timer);
@@ -212,69 +214,4 @@ export function connectToInstance(dataDir: string, timeoutMs = 2000): Promise<ne
       resolve(socket);
     });
   });
-}
-
-/** Tries to connect for up to `waitMs` (while a background Ward is starting or restarting). */
-export async function waitForInstance(dataDir: string, waitMs: number): Promise<net.Socket | null> {
-  const until = Date.now() + waitMs;
-  for (;;) {
-    const socket = await connectToInstance(dataDir);
-    if (socket || Date.now() > until) return socket;
-    await new Promise((r) => setTimeout(r, 250));
-  }
-}
-
-/**
- * Runs this process as a Ward window: shows the background Ward's output and passes typed lines
- * to it. Ctrl+C quits Ward entirely; closing the window leaves it running in the tray.
- */
-export function runViewer(first: net.Socket, dataDir: string): void {
-  let socket = first;
-  let quitting = false;
-  const pressEnterToClose = (code: number) => {
-    if (!rl) process.exit(code);
-    console.log("\nPress Enter to close.");
-    rl.removeAllListeners("line");
-    rl.once("line", () => process.exit(code));
-  };
-
-  const attach = (s: net.Socket) => {
-    socket = s;
-    s.on("error", () => s.destroy());
-    jsonLines(s, (msg) => {
-      if (msg.t === "out" && typeof msg.text === "string") console.log(msg.text);
-      else if (msg.t === "hide") process.exit(0);
-      else if (msg.t === "bye") {
-        quitting = true;
-        if (typeof msg.text === "string" && msg.text) console.log(msg.text);
-        if (msg.error) pressEnterToClose(1);
-        else process.exit(0);
-      }
-    });
-    s.on("close", () => {
-      if (quitting || s !== socket) return;
-      // No goodbye: Ward is restarting (an update). Wait for the new one.
-      void waitForInstance(dataDir, 30_000).then((next) => {
-        if (next) attach(next);
-        else {
-          console.log("\n  Ward isn't running any more.");
-          quitting = true;
-          pressEnterToClose(1);
-        }
-      });
-    });
-  };
-  attach(first);
-
-  const rl = process.stdin.isTTY ? readline.createInterface({ input: process.stdin }) : null;
-  rl?.on("line", (line) => write(socket, { t: "line", line }));
-  // Ctrl+C quits Ward (the window's text says so); the background Ward answers with "bye".
-  const quit = () => {
-    if (quitting) process.exit(0);
-    quitting = true;
-    write(socket, { t: "quit" });
-    setTimeout(() => process.exit(0), 3000).unref();
-  };
-  rl?.on("SIGINT", quit);
-  process.on("SIGINT", quit);
 }

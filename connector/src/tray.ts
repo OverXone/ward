@@ -1,7 +1,9 @@
 /**
- * The tray icon, drawn by a small Windows PowerShell script (Windows Forms NotifyIcon), so Ward
- * needs no native modules or extra files. The script is written to the data folder on each start,
- * and Ward talks to it over its stdin/stdout, one line per message:
+ * The tray icon, drawn by a separate small program (Windows Forms NotifyIcon) that Ward talks to
+ * over its stdin/stdout. Normally that's the Ward tray helper (tray/WardTray.cs, ~20 KB, built into
+ * Ward.exe and unpacked to the data folder), so Windows labels the icon and its notifications
+ * "Ward". If it can't run, the same thing is done by a Windows PowerShell script written to the
+ * data folder (Windows then shows "Windows PowerShell"). One line per message:
  *
  *   Ward -> tray:  notify<TAB>title<TAB>text   update<TAB>version (or empty to hide)   focus<TAB>pid   exit
  *   tray -> Ward:  ready   open   open-new (focus didn't work)   update   quit
@@ -10,8 +12,9 @@
  */
 
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { EventEmitter } from "node:events";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import readline from "node:readline";
 
@@ -89,6 +92,29 @@ function powershellPath(): string {
   return path.join(root, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
 }
 
+/**
+ * Writes the tray helper exe to the data folder, named after its hash so a running copy (from an
+ * older Ward) is never overwritten, and deletes helpers older versions left behind. Null on failure.
+ */
+export function unpackHelper(dataDir: string, body: Buffer): string | null {
+  const name = `ward-tray-${createHash("sha256").update(body).digest("hex").slice(0, 12)}.exe`;
+  const file = path.join(dataDir, name);
+  try {
+    if (!existsSync(file) || statSync(file).size !== body.length) writeFileSync(file, body);
+  } catch {
+    return null;
+  }
+  for (const other of readdirSync(dataDir)) {
+    if (!/^ward-tray-[0-9a-f]{12}\.exe$/.test(other) || other === name) continue;
+    try {
+      rmSync(path.join(dataDir, other), { force: true });
+    } catch {
+      // still running (an older Ward); removed on a later start
+    }
+  }
+  return file;
+}
+
 /** Single-line text for the tray protocol (no tabs or newlines; Windows caps balloon text anyway). */
 function clean(text: string, max: number): string {
   return text.replace(/[\t\r\n]+/g, " ").slice(0, max);
@@ -102,32 +128,70 @@ export interface TrayEvents {
   quit: [];
   /** The tray script exited on its own (it crashed or was killed). */
   gone: [];
+  // From the Ward app window:
+  newQr: [];
+  /** A phone's number in the list (1-based), or "all". */
+  forget: [which: string];
+  /** The user closed the window (it's hidden; Ward keeps running). */
+  closed: [];
 }
 
 export class Tray extends EventEmitter<TrayEvents> {
   private disposed = false;
+  /** True when the Ward tray helper runs (it has the Ward window); false for the PowerShell icon. */
+  hasWindow = false;
 
   private constructor(private readonly child: ChildProcess) {
     super();
   }
 
   /**
-   * Starts the tray icon. Resolves to null if it can't be shown (no PowerShell, Windows Forms
-   * blocked by policy, ...); Ward then works like a plain console app.
+   * Starts the tray icon: the Ward tray helper built into Ward.exe (so Windows labels it "Ward"),
+   * else the PowerShell script. Resolves to null if neither can be shown (Windows Forms blocked by
+   * policy, ...); Ward then works like a plain console app.
+   *
+   * `helper` is the helper exe's bytes (from the SEA asset), or a path to an existing one (tests).
    */
-  static start(opts: { exe: string; dataDir: string; timeoutMs?: number }): Promise<Tray | null> {
-    if (process.platform !== "win32") return Promise.resolve(null);
+  static async start(opts: {
+    exe: string;
+    dataDir: string;
+    helper?: Buffer | string;
+    timeoutMs?: number;
+  }): Promise<Tray | null> {
+    if (process.platform !== "win32") return null;
+    try {
+      mkdirSync(opts.dataDir, { recursive: true });
+    } catch {
+      return null;
+    }
+    const helperPath = typeof opts.helper === "string" ? opts.helper : opts.helper && unpackHelper(opts.dataDir, opts.helper);
+    if (helperPath) {
+      // Not started hidden: Windows would apply that to the helper's first window (the Ward window).
+      const tray = await Tray.launch(helperPath, [], opts.timeoutMs, false);
+      if (tray) {
+        tray.hasWindow = true;
+        return tray;
+      }
+    }
+    try {
+      const script = path.join(opts.dataDir, "tray.ps1");
+      writeFileSync(script, TRAY_SCRIPT, "utf8");
+      return await Tray.launch(
+        powershellPath(),
+        ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-STA", "-File", script, "-Exe", opts.exe],
+        opts.timeoutMs,
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /** Runs a tray program that speaks the protocol above; null if it doesn't say "ready" in time. */
+  private static launch(command: string, args: string[], timeoutMs = READY_TIMEOUT_MS, hide = true): Promise<Tray | null> {
     return new Promise((resolve) => {
       let child: ChildProcess;
       try {
-        mkdirSync(opts.dataDir, { recursive: true });
-        const script = path.join(opts.dataDir, "tray.ps1");
-        writeFileSync(script, TRAY_SCRIPT, "utf8");
-        child = spawn(
-          powershellPath(),
-          ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-STA", "-File", script, "-Exe", opts.exe],
-          { stdio: ["pipe", "pipe", "ignore"], windowsHide: true },
-        );
+        child = spawn(command, args, { stdio: ["pipe", "pipe", "ignore"], windowsHide: hide });
       } catch {
         return resolve(null);
       }
@@ -137,7 +201,7 @@ export class Tray extends EventEmitter<TrayEvents> {
         if (ready) return;
         child.kill();
         resolve(null);
-      }, opts.timeoutMs ?? READY_TIMEOUT_MS);
+      }, timeoutMs);
       child.on("error", () => {
         clearTimeout(timer);
         if (!ready) resolve(null);
@@ -158,6 +222,10 @@ export class Tray extends EventEmitter<TrayEvents> {
           tray.emit(msg);
         } else if (ready && msg === "open-new") {
           tray.emit("openNew");
+        } else if (ready && (msg === "newqr" || msg === "closed")) {
+          tray.emit(msg === "newqr" ? "newQr" : "closed");
+        } else if (ready && /^forget\t(all|\d{1,4})$/.test(msg)) {
+          tray.emit("forget", msg.slice("forget\t".length));
         }
       });
     });
@@ -175,6 +243,37 @@ export class Tray extends EventEmitter<TrayEvents> {
   /** Brings the window of process `pid` to the front (emits "openNew" if it can't). */
   focus(pid: number): void {
     this.send(`focus\t${pid}`);
+  }
+
+  // ---- The Ward app window (only the Ward tray helper has one; the PowerShell script ignores these) ----
+
+  /** Shows the window and brings it to the front. */
+  show(): void {
+    this.send("show");
+  }
+
+  hide(): void {
+    this.send("hide");
+  }
+
+  title(text: string): void {
+    this.send(`title\t${clean(text, 100)}`);
+  }
+
+  /** Adds lines to the window's activity log. */
+  log(text: string): void {
+    for (const line of text.split(/\r?\n/)) if (line.trim()) this.send(`log\t${clean(line.trimEnd(), 500)}`);
+  }
+
+  /** The pairing QR code (a small PNG, one pixel per module), the address to type and the code. */
+  pairing(png: Buffer, address: string, code: string): void {
+    this.send(`qr\t${png.toString("base64")}\t${clean(address, 100)}\t${clean(code, 20)}`);
+  }
+
+  /** Paired phones as "name" and "last used" pairs. */
+  phones(list: Array<{ name: string; lastUsed: string }>): void {
+    const sep = (s: string) => clean(s, 80).replace(/[\u001e\u001f]/g, "");
+    this.send(`phones\t${list.map((p) => `${sep(p.name)}\u001f${sep(p.lastUsed)}`).join("\u001e")}`);
   }
 
   /** Shows "Update to Ward x" in the tray menu (null hides it). */
