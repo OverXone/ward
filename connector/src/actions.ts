@@ -12,7 +12,7 @@ import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import { SWAP_KINDS, type SwapKind } from "./shared/phone-api";
-import { findHoverTarget, findMyActiveAction, findSwap, type LcuAction, type LcuSession } from "./state/champ-select";
+import { benchChampions, findHoverTarget, findMyActiveAction, findSwap, rerollsLeft, type LcuAction, type LcuSession } from "./state/champ-select";
 import { log } from "./log";
 import { championIds, URI } from "./state/store";
 
@@ -139,10 +139,12 @@ async function getSession(http: LcuHttp): Promise<LcuSession> {
   return s;
 }
 
-async function allowedChampions(http: LcuHttp, ctx: ActionContext, type: string): Promise<Set<number>> {
+async function allowedChampions(http: LcuHttp, ctx: ActionContext, type: string, session?: LcuSession): Promise<Set<number>> {
   const ids = championIds(await http.getOrNull(type === "ban" ? URI.bannable : URI.pickable)) ?? [];
   const pushed = ctx.lists?.()[type === "ban" ? "bannable" : "pickable"] ?? [];
-  const allowed = new Set([...ids, ...pushed].filter((n) => Number.isInteger(n) && n > 0));
+  // Choose-from-a-few modes: the champions League offers me are pickable even if the list lags.
+  const offered = type === "pick" && session?.allowSubsetChampionPicks ? (championIds(await http.getOrNull(URI.subset)) ?? []) : [];
+  const allowed = new Set([...ids, ...pushed, ...offered].filter((n) => Number.isInteger(n) && n > 0));
   if (allowed.size || !ctx.knownChampions) return allowed;
 
   // No list from League: accept any real champion and let League refuse what it won't allow
@@ -160,8 +162,8 @@ function noteFallback(type: string): void {
   log.info(`League gave no ${type} list (connector joined mid champ select?); letting League check the champion`);
 }
 
-async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number): Promise<void> {
-  const allowed = await allowedChampions(http, ctx, action.type);
+async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number, session?: LcuSession): Promise<void> {
+  const allowed = await allowedChampions(http, ctx, action.type, session);
   if (!allowed.has(championId)) {
     throw new ActionError(400, action.type === "ban" ? "That champion can't be banned" : "That champion isn't pickable");
   }
@@ -327,7 +329,7 @@ const ACTIONS = {
       const session = await getSession(http);
       const target = findHoverTarget(session);
       if (!target) throw new ActionError(409, "Nothing to pick or ban right now");
-      await assertAllowed(http, ctx, target, championId);
+      await assertAllowed(http, ctx, target, championId, session);
       const status = await call(http, "PATCH", actionPath(target.id), { championId });
       if (status === 404) throw new ActionError(409, "That action no longer exists");
     },
@@ -340,7 +342,7 @@ const ACTIONS = {
       if (!action) throw new ActionError(409, "It's not your turn");
       if (!(action.championId > 0)) throw new ActionError(409, "Select a champion first");
       const championId = action.championId;
-      await assertAllowed(http, ctx, action, championId);
+      await assertAllowed(http, ctx, action, championId, session);
       const path = actionPath(action.id);
 
       // On a live client (2026-11-12) POST .../complete answered 204 without locking, every time,
@@ -378,6 +380,31 @@ const ACTIONS = {
       const ids = await ctx.loadout?.selectableSkinIds();
       if (!ids?.has(skinId)) throw new ActionError(400, "You can't use that skin right now");
       if ((await call(http, "PATCH", MY_SELECTION, { selectedSkinId: skinId })) === 404) throw new ActionError(409, "Not in champion select");
+    },
+  },
+  "champ-select/bench": {
+    keys: ["championId"],
+    validate: (input) => void championIdFrom(input),
+    async run(input, http) {
+      const championId = championIdFrom(input);
+      const session = await getSession(http);
+      if (session.isSpectating) throw new ActionError(409, "You're spectating this champion select");
+      const bench = benchChampions(session);
+      if (!bench) throw new ActionError(409, "This mode has no bench");
+      if (!bench.includes(championId)) throw new ActionError(409, "That champion isn't on the bench anymore");
+      const status = await call(http, "POST", `/lol-champ-select/v1/session/bench/swap/${championId}`);
+      if (status === 404) throw new ActionError(502, "This League client can't swap from the bench from here. Use your PC.");
+    },
+  },
+  "champ-select/reroll": {
+    keys: [],
+    async run(_input, http) {
+      const session = await getSession(http);
+      const left = rerollsLeft(session);
+      if (left === null) throw new ActionError(409, "This mode doesn't allow rerolls");
+      if (left < 1) throw new ActionError(409, "You have no rerolls left");
+      const status = await call(http, "POST", "/lol-champ-select/v1/session/my-selection/reroll");
+      if (status === 404) throw new ActionError(502, "This League client can't reroll from here. Use your PC.");
     },
   },
   "invitations/accept": invitationAction("accept"),

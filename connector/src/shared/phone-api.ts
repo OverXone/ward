@@ -104,6 +104,12 @@ export interface ChampSelectView {
   /** My summoner spells [D, F] (0 = none) and selected skin (0 = default / none yet). */
   mySpells: [number, number];
   mySkinId: number;
+  /** ARAM-style bench: champions I can swap mine for (null = this mode has no bench). */
+  bench: number[] | null;
+  /** Rerolls I have left (null = this mode doesn't allow rerolling). */
+  rerollsLeft: number | null;
+  /** Modes that offer each player a few champions: the ones League offers me (empty otherwise). */
+  choices: number[];
 }
 
 /** A summoner spell I can take into this game (GET /api/spells). */

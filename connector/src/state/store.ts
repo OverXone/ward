@@ -11,7 +11,7 @@ import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
 import { Handles } from "../handles";
 import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
-import { deriveChampSelect, type LcuSession } from "./champ-select";
+import { deriveChampSelect, describeMode, type LcuSession } from "./champ-select";
 
 export const URI = {
   phase: "/lol-gameflow/v1/gameflow-phase",
@@ -22,6 +22,8 @@ export const URI = {
   pickable: "/lol-champ-select/v1/pickable-champion-ids",
   bannable: "/lol-champ-select/v1/bannable-champion-ids",
   invitations: "/lol-lobby/v2/received-invitations",
+  /** The few champions League offers me in choose-from-a-few modes (allowSubsetChampionPicks). */
+  subset: "/lol-lobby-team-builder/champ-select/v1/subset-champion-list",
 } as const;
 
 type Key = keyof typeof URI;
@@ -69,6 +71,7 @@ type Raw = {
   pickable: number[] | null;
   bannable: number[] | null;
   invitations: RawInvitation[] | null;
+  subset: number[] | null;
 };
 
 const emptyRaw = (): Raw => ({
@@ -80,6 +83,7 @@ const emptyRaw = (): Raw => ({
   pickable: null,
   bannable: null,
   invitations: null,
+  subset: null,
 });
 
 /** Champion ids from a list the client sent (integers, or integer strings), or null if it isn't a list. */
@@ -188,6 +192,8 @@ export class Store extends EventEmitter {
   private listsFetching = false;
   private lastCsPhase: string | null = null;
   private oddListsLogged = new Set<string>();
+  private lastModeLine = "";
+  private subsetFetchedAt = 0;
   /** Riot ID game names of people who invited me, by summoner id. */
   private inviterNames = new Map<number, string>();
   private inviterLookups = new Set<number>();
@@ -247,6 +253,33 @@ export class Store extends EventEmitter {
     if (key === "session") this.checkChampionLists();
   }
 
+  /** Logs how this champ select works whenever that changes, so a new mode can be supported from the log. */
+  private noteMode(): void {
+    const session = this.raw.session;
+    if (!session) {
+      this.lastModeLine = "";
+      return;
+    }
+    const line = describeMode(session, this.raw.subset);
+    if (line === this.lastModeLine) return;
+    this.lastModeLine = line;
+    log.info(`Champ select mode: ${line}`);
+  }
+
+  /** The subset list may have no event of its own, so fetch it while a mode that uses it has none. */
+  private checkSubset(): void {
+    const session = this.raw.session;
+    if (!session?.allowSubsetChampionPicks || this.raw.subset?.length || Date.now() - this.subsetFetchedAt < 2000) return;
+    const http = this.http;
+    if (!http) return;
+    this.subsetFetchedAt = Date.now();
+    const before = this.versions.get("subset") ?? 0;
+    void http.getOrNull(URI.subset).then((value) => {
+      if (http !== this.http || (this.versions.get("subset") ?? 0) !== before || !this.raw.session) return;
+      this.setRaw("subset", value);
+    });
+  }
+
   /**
    * The pickable/bannable lists only get events when they change, so if one is ever missed or a
    * snapshot came back empty, the phone would grey out every champion for the whole champ select.
@@ -255,11 +288,14 @@ export class Store extends EventEmitter {
    */
   private checkChampionLists(): void {
     const session = this.raw.session;
+    this.noteMode();
     if (!session) {
       this.lastCsPhase = null;
       this.oddListsLogged.clear();
+      this.raw.subset = null;
       return;
     }
+    this.checkSubset();
     const csPhase = session.timer?.phase ?? null;
     const phaseChanged = csPhase !== this.lastCsPhase;
     this.lastCsPhase = csPhase;
@@ -283,6 +319,7 @@ export class Store extends EventEmitter {
       this.recompute();
       const cs = this.state.champSelect;
       if (cs) log.info(`Champ select ${csPhase ?? "?"}: ${cs.pickableChampionIds.length} pickable, ${cs.bannableChampionIds.length} bannable`);
+      this.noteMode();
     } finally {
       this.listsFetching = false;
     }
@@ -341,6 +378,7 @@ export class Store extends EventEmitter {
         break;
       case "pickable":
       case "bannable":
+      case "subset":
         this.raw[key] = championIds(value);
         break;
       case "invitations":
@@ -428,7 +466,7 @@ export class Store extends EventEmitter {
       lobby: connected ? deriveLobby(r.lobby, Number.isInteger(queueId) ? (this.queueNames?.get(queueId as number) ?? null) : null) : null,
       queue: connected ? deriveQueue(search) : null,
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
-      champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable) : null,
+      champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable, Date.now(), r.subset) : null,
       invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
     };
   }

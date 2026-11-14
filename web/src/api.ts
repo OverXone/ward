@@ -112,6 +112,8 @@ export type ActionName =
   | "champ-select/lock"
   | "champ-select/spells"
   | "champ-select/skin"
+  | "champ-select/bench"
+  | "champ-select/reroll"
   | "champ-select/swap/accept"
   | "champ-select/swap/decline"
   | "champ-select/swap/request"

@@ -174,6 +174,7 @@ const URIS = {
   session: "/lol-champ-select/v1/session",
   pickable: "/lol-champ-select/v1/pickable-champion-ids",
   bannable: "/lol-champ-select/v1/bannable-champion-ids",
+  subset: "/lol-lobby-team-builder/champ-select/v1/subset-champion-list",
 };
 
 function set(uri: string, value: unknown): void {
@@ -326,6 +327,77 @@ function toChampSelect(): void {
   later(10000, () => startNextTurn());
 }
 
+// ---------- ARAM (bench + rerolls) and choose-one-of-two ----------
+
+function randomFree(taken: Set<number>): number {
+  const free = ALL_IDS.filter((x) => !taken.has(x));
+  return free[Math.floor(Math.random() * free.length)] ?? ALL_IDS[0]!;
+}
+
+/** Every champion anyone holds or the bench has. */
+function heldIds(): Set<number> {
+  const s = new Set<number>([...session.myTeam, ...session.theirTeam].map((m: any) => m.championId).filter((x: number) => x > 0));
+  for (const b of session.benchChampions ?? []) s.add(b.championId);
+  return s;
+}
+
+/** Key a: ARAM. Everyone gets a random champion; a teammate rerolls after 4 s, filling the bench. */
+function toAram(): void {
+  toChampSelect();
+  clearTimers();
+  session.actions = [];
+  session.queueId = 450;
+  for (const field of Object.values(SWAP_FIELDS)) session[field] = [];
+  const taken = new Set<number>();
+  for (const m of [...session.myTeam, ...session.theirTeam]) {
+    m.championId = randomFree(taken);
+    m.championPickIntent = 0;
+    m.assignedPosition = "";
+    m.selectedSkinId = m.championId * 1000;
+    taken.add(m.championId);
+  }
+  Object.assign(session, { benchEnabled: true, benchChampions: [], allowRerolling: true, rerollsRemaining: 2 });
+  session.timer = { ...session.timer, phase: "FINALIZATION", adjustedTimeLeftInPhase: 60000, totalTimeInPhase: 60000 };
+  phaseEndsAt = Date.now() + 60000;
+  publishSession();
+  say(`ARAM: you got champion ${memberByCell(LOCAL_CELL).championId}; game starts in 60 s`);
+  later(4000, () => reroll(0));
+  later(60000, toGame);
+}
+
+function reroll(cell: number): boolean {
+  const m = memberByCell(cell);
+  const next = randomFree(heldIds());
+  session.benchChampions.push({ championId: m.championId, isPriority: false });
+  m.championId = next;
+  m.selectedSkinId = next * 1000;
+  say(`cell ${cell} rerolled into ${next}`);
+  publishSession();
+  return true;
+}
+
+/** Key m: everyone is offered two champions and picks one at the same time. */
+function toChooseOne(): void {
+  toChampSelect();
+  clearTimers();
+  for (const a of allActions()) a.completed = true;
+  let id = 500;
+  const picks = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((cell) => ({ id: id++, actorCellId: cell, championId: 0, completed: false, isAllyAction: cell < 5, isInProgress: true, pickTurn: 1, type: "pick" }));
+  session.actions = [picks];
+  session.queueId = 2400;
+  session.allowSubsetChampionPicks = true;
+  session.hasSimultaneousPicks = true;
+  for (const m of [...session.myTeam, ...session.theirTeam]) m.championPickIntent = 0;
+  const offer = [randomFree(new Set()), 0];
+  offer[1] = randomFree(new Set([offer[0]!]));
+  set(URIS.subset, offer);
+  session.timer = { ...session.timer, phase: "BAN_PICK", adjustedTimeLeftInPhase: 30000, totalTimeInPhase: 30000 };
+  phaseEndsAt = Date.now() + 30000;
+  publishSession();
+  say(`choose one of ${offer.join(" / ")}`);
+  for (const a of picks.filter((x) => x.actorCellId !== LOCAL_CELL)) later(2000 + Math.random() * 6000, () => botAct(a));
+}
+
 function allActions(): Action[] {
   return session ? (session.actions as Action[][]).flat() : [];
 }
@@ -472,6 +544,7 @@ function toGame(): void {
   set(URIS.session, null);
   set(URIS.pickable, null);
   set(URIS.bannable, null);
+  set(URIS.subset, null);
   set(URIS.phase, "GameStart");
   later(1500, () => set(URIS.phase, "InProgress"));
   say("phase GameStart -> InProgress");
@@ -669,6 +742,24 @@ async function handle(req: any, res: any): Promise<void> {
     return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(slot));
   }
 
+  const bench = /^\/lol-champ-select\/v1\/session\/bench\/swap\/(\d+)$/.exec(p);
+  if (bench && m === "POST" && session?.benchEnabled) {
+    const i = (session.benchChampions as { championId: number }[]).findIndex((b) => b.championId === Number(bench[1]));
+    if (i < 0) return lcuError(res, 400, "CHAMPION_NOT_ON_BENCH");
+    const me = memberByCell(LOCAL_CELL);
+    const [taken] = session.benchChampions.splice(i, 1, { championId: me.championId, isPriority: false });
+    me.championId = taken.championId;
+    me.selectedSkinId = taken.championId * 1000;
+    publishSession();
+    return void res.writeHead(204).end();
+  }
+  if (m === "POST" && p === "/lol-champ-select/v1/session/my-selection/reroll" && session?.allowRerolling) {
+    if (!(session.rerollsRemaining > 0)) return lcuError(res, 400, "NO_REROLLS_REMAINING");
+    session.rerollsRemaining--;
+    reroll(LOCAL_CELL);
+    return void res.writeHead(204).end();
+  }
+
   const act = /^\/lol-champ-select\/v1\/session\/actions\/(\d+)(\/complete)?$/.exec(p);
   if (act && session) {
     const a = allActions().find((x) => x.id === Number(act[1]));
@@ -685,6 +776,8 @@ async function handle(req: any, res: any): Promise<void> {
     if (m === "PATCH") {
       if (body?.championId !== undefined) {
         if (!ALL_IDS.includes(body.championId) || takenIds().has(body.championId)) return lcuError(res, 400, "Invalid champion");
+        const offer = state[URIS.subset] as number[] | undefined;
+        if (session.allowSubsetChampionPicks && offer && !offer.includes(body.championId)) return lcuError(res, 400, "CHAMPION_NOT_OFFERED");
         a.championId = body.championId;
         if (a.type === "pick" && !a.isInProgress) memberByCell(LOCAL_CELL).championPickIntent = body.championId;
       }
@@ -730,7 +823,7 @@ void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType
     toLobby();
     console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
     console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
-    console.log("Keys: l=lobby q=queue r=ready check c=champ select n=finish current turn g=in game 0=none x=quit");
+    console.log("Keys: l=lobby q=queue r=ready check c=champ select a=ARAM m=choose one of two n=finish current turn g=in game 0=none x=quit");
     console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions   i = a friend invites you\n");
   });
 });
@@ -758,6 +851,8 @@ if (process.stdin.isTTY) {
     else if (k === "q") toQueue();
     else if (k === "r") toReadyCheck();
     else if (k === "c") toChampSelect();
+    else if (k === "a") toAram();
+    else if (k === "m") toChooseOne();
     else if (k === "n") finishCurrentTurn();
     else if (k === "g") toGame();
     else if (k === "f") toggleFreeze();
@@ -776,6 +871,8 @@ if (process.stdin.isTTY) {
       o: () => incomingSwap("pickOrderSwaps", 4),
       t: () => incomingSwap("trades", 0),
       i: incomingInvite,
+      a: toAram,
+      m: toChooseOne,
     };
     ({ l: () => toLobby(), q: toQueue, r: toReadyCheck, c: toChampSelect, n: finishCurrentTurn, g: toGame, "0": toNone, x: cleanup, ...swaps } as Record<string, () => void>)[k]?.();
   });

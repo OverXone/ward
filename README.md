@@ -4,6 +4,7 @@ Control your League of Legends client from your phone over your home Wi-Fi. Step
 - accept or decline ready checks
 - start or cancel the queue
 - hover, ban and lock in champions
+- in ARAM, reroll and swap with the bench; in modes that offer you a few champions, pick one of them
 - accept, decline or ask for role swaps, pick-order swaps and champion trades
 - choose your summoner spells, skin and chroma
 - join or decline lobby invitations, and invite online friends to your lobby
@@ -30,6 +31,7 @@ Good to know:
 - **Add it to your home screen** (browser menu, "Add to Home Screen") so it opens like an app. On iPhone the icon doesn't share Safari's login, so open the icon and type the code there once.
 - **Favorite champions:** long-press a champion in the grid to star it. When you're picking, starred champions come first.
 - **Swaps:** a teammate's swap request pops up with Accept and Decline. To ask someone, tap a teammate with the ⇄ badge.
+- **ARAM:** a **Bench** panel lists the bench champions (tap one to swap) and a **Reroll** button shows how many rerolls you have left. When League offers you only a few champions, the phone shows just those as big tiles.
 - **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own.
 - **Runes** aren't on the phone; set them in the PC client or with a tool like Mobalytics. (The last version with a rune page picker is tagged `with-runes` in git.)
 - **Invitations:** when someone invites you, a card with **Join** and **Decline** appears on every screen. In your lobby, **Invite friends** lists friends who are online in League.

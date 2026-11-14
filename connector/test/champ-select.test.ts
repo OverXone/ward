@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { deriveChampSelect, findHoverTarget, findMyActiveAction, hasLockedPick } from "../src/state/champ-select";
-import { advanceTo, draftSession } from "./fixtures/sessions";
+import { deriveChampSelect, describeMode, findHoverTarget, findMyActiveAction, hasLockedPick } from "../src/state/champ-select";
+import { advanceTo, aramSession, draftSession, subsetSession } from "./fixtures/sessions";
 
 describe("findMyActiveAction", () => {
   it("finds my in-progress ban during the simultaneous ban phase", () => {
@@ -145,5 +145,60 @@ describe("swaps", () => {
     const s = withSwaps();
     s.isSpectating = true;
     expect(deriveChampSelect(s, [], []).myTeam.every((p) => Object.keys(p.swaps).length === 0)).toBe(true);
+  });
+});
+
+describe("ARAM and choose-from-a-few modes", () => {
+  it("reports the bench and rerolls, and no turn", () => {
+    const v = deriveChampSelect(aramSession(), [], []);
+    expect(v.bench).toEqual([51, 22]);
+    expect(v.rerollsLeft).toBe(1);
+    expect(v.choices).toEqual([]);
+    expect(v.myTurn).toBeNull();
+    expect(v.canHoverIntent).toBe(false);
+    expect(v.myTeam.find((p) => p.isMe)?.championId).toBe(202);
+  });
+
+  it("reads the older plain-id bench and drops junk ids", () => {
+    const s = aramSession();
+    delete s.benchChampions;
+    s.benchChampionIds = [51, 0, -1, 51, 2.5, 22];
+    expect(deriveChampSelect(s, [], []).bench).toEqual([51, 22]);
+  });
+
+  it("shows no bench or rerolls in draft, and 0 rerolls once they're used", () => {
+    const draft = deriveChampSelect(draftSession(), [], []);
+    expect(draft.bench).toBeNull();
+    expect(draft.rerollsLeft).toBeNull();
+    const s = aramSession();
+    s.rerollsRemaining = 0;
+    expect(deriveChampSelect(s, [], []).rerollsLeft).toBe(0);
+  });
+
+  it("hides the bench and rerolls while spectating", () => {
+    const s = aramSession();
+    s.isSpectating = true;
+    const v = deriveChampSelect(s, [], []);
+    expect(v.bench).toBeNull();
+    expect(v.rerollsLeft).toBeNull();
+  });
+
+  it("offers the subset champions and treats my in-progress pick as my turn in any phase", () => {
+    const s = subsetSession("FINALIZATION");
+    expect(findMyActiveAction(s)).toMatchObject({ type: "pick", actorCellId: 2 });
+    const v = deriveChampSelect(s, [7, 8], [], 0, [7, 0, 8, 7]);
+    expect(v.choices).toEqual([7, 8]);
+    expect(v.myTurn).toEqual({ type: "pick", championId: 0 });
+    expect(deriveChampSelect(subsetSession("GAME_STARTING"), [], []).myTurn).toBeNull();
+  });
+
+  it("ignores a subset list when the mode doesn't use one", () => {
+    expect(deriveChampSelect(draftSession(), [], [], 0, [7, 8]).choices).toEqual([]);
+  });
+
+  it("describes the mode for the log without player data", () => {
+    const line = describeMode(aramSession(), null);
+    expect(line).toBe("queue 450; phase FINALIZATION; actions: none; bench 2; rerolls 1; subset off");
+    expect(describeMode(subsetSession(), [1, 2])).toContain("actions: 10 pick; bench off; rerolls off; subset 2");
   });
 });

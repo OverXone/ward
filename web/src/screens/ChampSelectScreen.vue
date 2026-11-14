@@ -2,6 +2,7 @@
 import { SWAP_KINDS, type ChampSelectView } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
 import { myTurnAlert, swapRequestAlert } from "../alerts";
+import BenchPanel from "../components/BenchPanel.vue";
 import ChampGrid from "../components/ChampGrid.vue";
 import ChampIcon from "../components/ChampIcon.vue";
 import LoadoutBar from "../components/LoadoutBar.vue";
@@ -63,6 +64,10 @@ const teammateWants = computed(() => {
 const reasons = computed(() =>
   mode.value === "ban" ? new Map([...teammateWants.value].map((id) => [id, "Teammate's pick"])) : undefined,
 );
+// Modes that offer each player only a few champions show just those, as big tiles.
+const choices = computed(() => props.cs.choices);
+const hasBench = computed(() => props.cs.bench !== null || !!props.cs.rerollsLeft);
+
 const banBlocked = computed(() => props.cs.myTurn?.type === "ban" && teammateWants.value.has(serverSelected.value));
 
 // Swap requests (role, pick order, champion trade) in both directions.
@@ -105,6 +110,10 @@ const canLock = computed(() => !!props.cs.myTurn && serverSelected.value > 0 && 
 const headline = computed(() => {
   const cs = props.cs;
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Your turn to ban" : "Your turn to pick";
+  if (choices.value.length && !cs.hasLockedPick) return "Choose your champion";
+  if (hasBench.value && cs.phase !== "GAME_STARTING") {
+    return me.value?.championId ? `You're playing ${championName(me.value.championId)}` : "Champion select";
+  }
   switch (cs.phase) {
     case "PLANNING":
       return "Planning: pick what you'll play";
@@ -127,6 +136,11 @@ const headline = computed(() => {
 const subline = computed(() => {
   const cs = props.cs;
   if (cs.myTurn) return cs.myTurn.type === "ban" ? "Tap a champion, then confirm the ban." : "Tap a champion, then lock in.";
+  if (choices.value.length && !cs.hasLockedPick && !canChoose.value) return "League offers you these. Choose on your PC.";
+  if (hasBench.value && cs.phase !== "GAME_STARTING") {
+    if (cs.bench?.length) return cs.rerollsLeft ? "Swap with the bench or reroll below." : "Tap a bench champion below to swap.";
+    if (cs.rerollsLeft) return "Reroll below for a different champion.";
+  }
   if (cs.canHoverIntent && cs.phase === "PLANNING") return "Bans start when the timer ends. This only shows your team your plan.";
   if (cs.canHoverIntent) return "Tap to show your team what you'll play.";
   if (cs.phase === "FINALIZATION") return cs.hasLockedPick ? "Set your spells and skin below; runes on your PC." : "";
@@ -175,8 +189,24 @@ const seconds = computed(() => champSelectSecondsLeft());
 
     <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />
 
+    <BenchPanel v-if="hasBench" :bench="cs.bench" :rerolls-left="cs.rerollsLeft" />
+
+    <section v-if="choices.length && !cs.hasLockedPick" class="choices">
+      <button
+        v-for="id in choices"
+        :key="id"
+        class="choice"
+        :class="{ on: selected === id }"
+        :disabled="!canChoose"
+        @click="choose(id)"
+      >
+        <ChampIcon :id="id" :size="88" />
+        <span class="choice-name">{{ championName(id) }}</span>
+      </button>
+    </section>
+
     <ChampGrid
-      v-if="canChoose"
+      v-else-if="canChoose"
       :key="cs.myTurn?.type ?? 'intent'"
       :champions="champions"
       :enabled="enabled"
@@ -261,6 +291,38 @@ const seconds = computed(() => champSelectSecondsLeft());
   color: var(--muted);
   text-transform: uppercase;
   letter-spacing: 0.1em;
+}
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 12px;
+}
+.choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px;
+  min-width: 112px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  border: 2px solid var(--border);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.choice.on {
+  border-color: var(--accept);
+  background: rgba(34, 195, 120, 0.14);
+}
+.choice:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+.choice-name {
+  font-size: 15px;
+  font-weight: 700;
 }
 .teams {
   display: grid;

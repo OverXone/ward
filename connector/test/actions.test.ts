@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { friendlyLcuError, runAction, type ActionName } from "../src/actions";
 import type { LcuHttp } from "../src/lcu/http";
 import { expectError, fakeLcu, ok, type Route } from "./fake-lcu";
-import { advanceTo, draftSession } from "./fixtures/sessions";
+import { advanceTo, aramSession, draftSession, subsetSession } from "./fixtures/sessions";
 
 const run = (name: ActionName, body: unknown, http: LcuHttp | null) => runAction(name, body, { http });
 
@@ -307,5 +307,49 @@ describe("friendlyLcuError", () => {
   it("keeps plain messages and handles none", () => {
     expect(friendlyLcuError("Something broke")).toBe("Something broke");
     expect(friendlyLcuError(null)).toBeNull();
+  });
+});
+
+describe("ARAM bench and rerolls", () => {
+  const aram = (session: object, extra: Record<string, Route> = {}) =>
+    fakeLcu({ "GET /lol-champ-select/v1/session": ok(session), ...extra });
+
+  it("swaps only for a champion that's on the bench right now", async () => {
+    const lcu = aram(aramSession(), { "POST /lol-champ-select/v1/session/bench/swap/22": ok() });
+    await run("champ-select/bench", { championId: 22 }, lcu.http);
+    expect(lcu.writes()).toEqual([{ method: "POST", path: "/lol-champ-select/v1/session/bench/swap/22", body: undefined }]);
+    await expectError(run("champ-select/bench", { championId: 99 }, lcu.http), 409, /isn't on the bench/);
+    await expectError(run("champ-select/bench", { championId: "22" }, lcu.http), 400, /championId/);
+    expect(lcu.writes()).toHaveLength(1);
+  });
+
+  it("refuses bench swaps outside bench modes", async () => {
+    const lcu = aram(draftSession());
+    await expectError(run("champ-select/bench", { championId: 22 }, lcu.http), 409, /no bench/);
+    expect(lcu.writes()).toHaveLength(0);
+  });
+
+  it("rerolls only while rerolls are left", async () => {
+    const lcu = aram(aramSession(), { "POST /lol-champ-select/v1/session/my-selection/reroll": ok() });
+    await run("champ-select/reroll", undefined, lcu.http);
+    expect(lcu.writes()).toEqual([{ method: "POST", path: "/lol-champ-select/v1/session/my-selection/reroll", body: undefined }]);
+
+    const used = aramSession();
+    used.rerollsRemaining = 0;
+    await expectError(run("champ-select/reroll", undefined, aram(used).http), 409, /no rerolls left/);
+    await expectError(run("champ-select/reroll", undefined, aram(draftSession()).http), 409, /doesn't allow rerolls/);
+  });
+
+  it("lets me pick one of the champions League offers me", async () => {
+    const s = subsetSession();
+    const mine = s.actions[0]!.find((a) => a.actorCellId === 2)!;
+    const lcu = aram(s, {
+      "GET /lol-champ-select/v1/pickable-champion-ids": ok([]),
+      "GET /lol-lobby-team-builder/champ-select/v1/subset-champion-list": ok([7, 8]),
+      [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(),
+    });
+    await run("champ-select/hover", { championId: 8 }, lcu.http);
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${mine.id}`, body: { championId: 8 } }]);
+    await expectError(run("champ-select/hover", { championId: 9 }, lcu.http), 400, /pickable/);
   });
 });

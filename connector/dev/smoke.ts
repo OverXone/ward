@@ -181,6 +181,35 @@ async function main() {
   check(true, "reconnected after client restart");
   const lcuPassword2 = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
 
+  // --- ARAM: bench and rerolls ---
+  mockKey("a");
+  await waitFor("ARAM champ select", () => state?.champSelect?.bench && state.champSelect.rerollsLeft === 2);
+  const mine = () => state?.champSelect?.myTeam.find((p) => p.isMe)?.championId ?? 0;
+  const first = mine();
+  check(first > 0 && !state!.champSelect!.myTurn, "ARAM: champion handed out, no turn to take");
+  check((await act("champ-select/bench", { championId: 999 })).status === 409, "ARAM: can't take a champion that isn't on the bench");
+  check((await act("champ-select/reroll")).status === 204, "ARAM: reroll");
+  await waitFor("rerolled", () => state?.champSelect?.rerollsLeft === 1 && mine() !== first && state.champSelect.bench?.includes(first));
+  check(true, "ARAM: new champion, old one on the bench, one reroll left");
+  check((await act("champ-select/bench", { championId: first })).status === 204, "ARAM: swap back from the bench");
+  await waitFor("swapped back", () => mine() === first);
+  check(true, "ARAM: bench swap applied");
+  check(out.includes("Champ select mode: queue 450"), "ARAM: mode logged");
+
+  // --- choose one of two ---
+  mockKey("m");
+  await waitFor("two champions offered", () => state?.champSelect?.choices.length === 2 && state.champSelect.myTurn?.type === "pick");
+  const offered = state!.champSelect!.choices;
+  const notOffered = state!.champSelect!.pickableChampionIds.find((id) => !offered.includes(id))!;
+  check((await act("champ-select/hover", { championId: notOffered })).status !== 204, "choose-one: other champions refused");
+  check((await act("champ-select/hover", { championId: offered[1]! })).status === 204, "choose-one: hover an offered champion");
+  await waitFor("offered hovered", () => state?.champSelect?.myTurn?.championId === offered[1]);
+  check((await act("champ-select/lock")).status === 204, "choose-one: lock in");
+  await waitFor("choose-one locked", () => state?.champSelect?.hasLockedPick && mine() === offered[1]);
+  check(true, "choose-one: locked the offered champion");
+  mockKey("l");
+  await waitFor("back to lobby", () => state?.phase === "Lobby");
+
   // --- the phone stays paired when Ward restarts ---
   ws.close();
   const exited = new Promise((r) => conn.once("exit", r));

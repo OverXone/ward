@@ -46,6 +46,20 @@ export interface LcuSession {
   trades?: LcuSwap[];
   pickOrderSwaps?: LcuSwap[];
   positionSwaps?: LcuSwap[];
+  queueId?: number;
+  /** ARAM-style modes: champions anyone on my team can swap for. */
+  benchEnabled?: boolean;
+  benchChampions?: { championId: number; isPriority?: boolean }[];
+  /** Older clients listed the bench as plain ids. */
+  benchChampionIds?: number[];
+  allowRerolling?: boolean;
+  rerollsRemaining?: number;
+  /**
+   * League offers each player a few champions to choose from (GET .../subset-champion-list).
+   * Live ARAM, queue 450 (2026-11-14): 3 offered, 10 simultaneous pick actions during BAN_PICK,
+   * the champions nobody chose fill the bench, and allowRerolling with 0 rerolls.
+   */
+  allowSubsetChampionPicks?: boolean;
 }
 
 /** A swap slot between me and one teammate. state: AVAILABLE, SENT, RECEIVED, BUSY, INVALID, ... */
@@ -115,6 +129,11 @@ export function currentTurn(session: LcuSession): LcuAction[] | null {
  * but they can't be acted on until BAN_PICK starts.
  */
 export function inProgressActions(session: LcuSession): LcuAction[] {
+  // Choose-from-a-few modes have no ban phase to wait for, and their phase names aren't known yet,
+  // so there an action League flags in progress counts in any phase but the last.
+  if (session.allowSubsetChampionPicks && hasInProgressFlag(session) && session.timer?.phase !== "GAME_STARTING") {
+    return flatActions(session).filter((a) => a.isInProgress === true && !a.completed);
+  }
   if (session.timer?.phase !== "BAN_PICK") return [];
   if (hasInProgressFlag(session)) {
     return flatActions(session).filter((a) => a.isInProgress === true && !a.completed);
@@ -162,6 +181,39 @@ export function hasLockedPick(session: LcuSession): boolean {
   );
   // No pick actions at all (e.g. ARAM): treat as "nothing to lock".
   return myPicks.length > 0 && myPicks.every((a) => a.completed);
+}
+
+const positiveIds = (list: unknown): number[] =>
+  Array.isArray(list) ? [...new Set(list.filter((n): n is number => Number.isInteger(n) && n > 0))] : [];
+
+/** Champions on the bench (ARAM), or null when this mode has no bench. */
+export function benchChampions(session: LcuSession): number[] | null {
+  if (!session.benchEnabled) return null;
+  const fromObjects = Array.isArray(session.benchChampions) ? session.benchChampions.map((b) => b?.championId) : [];
+  return positiveIds(fromObjects.length ? fromObjects : session.benchChampionIds);
+}
+
+/** Rerolls I have left, or null when this mode doesn't allow rerolling. */
+export function rerollsLeft(session: LcuSession): number | null {
+  if (!session.allowRerolling || session.isSpectating) return null;
+  const n = session.rerollsRemaining;
+  return Number.isInteger(n) && (n as number) > 0 ? (n as number) : 0;
+}
+
+/** One line for the log describing how this champ select works (no names or ids of people). */
+export function describeMode(session: LcuSession, subset: number[] | null): string {
+  const types = new Map<string, number>();
+  for (const a of flatActions(session)) types.set(a.type, (types.get(a.type) ?? 0) + 1);
+  const actions = [...types].map(([t, n]) => `${n} ${t}`).join(", ") || "none";
+  const bench = benchChampions(session);
+  return [
+    `queue ${session.queueId ?? "?"}`,
+    `phase ${session.timer?.phase ?? "?"}`,
+    `actions: ${actions}`,
+    `bench ${bench ? bench.length : "off"}`,
+    `rerolls ${session.allowRerolling ? (session.rerollsRemaining ?? "?") : "off"}`,
+    `subset ${session.allowSubsetChampionPicks ? (subset?.length ?? "?") : "off"}`,
+  ].join("; ");
 }
 
 function completedBans(session: LcuSession, ally: boolean): number[] {
@@ -226,6 +278,7 @@ export function deriveChampSelect(
   pickable: number[] | null,
   bannable: number[] | null,
   now = Date.now(),
+  subset: number[] | null = null,
 ): ChampSelectView {
   const active = inProgressActions(session);
   const my = findMyActiveAction(session);
@@ -247,5 +300,8 @@ export function deriveChampSelect(
     bannableChampionIds: (bannable ?? []).filter((n) => Number.isInteger(n) && n > 0),
     mySpells: [pos(me?.spell1Id), pos(me?.spell2Id)],
     mySkinId: pos(me?.selectedSkinId),
+    bench: session.isSpectating ? null : benchChampions(session),
+    rerollsLeft: rerollsLeft(session),
+    choices: session.allowSubsetChampionPicks ? positiveIds(subset) : [],
   };
 }

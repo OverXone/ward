@@ -56,3 +56,31 @@ export function advanceTo(s: LcuSession, groupIndex: number, champ = (a: LcuActi
   });
   return s;
 }
+
+/** ARAM-like session: champions handed out, no pick actions, a shared bench and rerolls. Local player is cell 2. */
+export function aramSession(): LcuSession & Record<string, unknown> {
+  const s = draftSession({ phase: "FINALIZATION" });
+  s.actions = [];
+  for (const m of [...s.myTeam, ...s.theirTeam]) m.championId = 200 + m.cellId;
+  return {
+    ...s,
+    queueId: 450,
+    benchEnabled: true,
+    benchChampions: [
+      { championId: 51, isPriority: false },
+      { championId: 22, isPriority: true },
+    ],
+    allowRerolling: true,
+    rerollsRemaining: 1,
+  };
+}
+
+/**
+ * A mode that offers each player a few champions: one simultaneous pick each, flagged in progress.
+ * Live ARAM (queue 450, 2026-11-14) does this during BAN_PICK; FINALIZATION here checks the phase rule.
+ */
+export function subsetSession(phase = "FINALIZATION"): LcuSession & Record<string, unknown> {
+  const s = draftSession({ phase });
+  s.actions = [[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map((c) => act(c, "pick", { isInProgress: true }))];
+  return { ...s, allowSubsetChampionPicks: true, hasSimultaneousPicks: true };
+}
