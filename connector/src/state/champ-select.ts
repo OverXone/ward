@@ -60,6 +60,7 @@ export interface LcuSession {
    * the champions nobody chose fill the bench, and allowRerolling with 0 rerolls.
    */
   allowSubsetChampionPicks?: boolean;
+  allowDuplicatePicks?: boolean;
 }
 
 /** A swap slot between me and one teammate. state: AVAILABLE, SENT, RECEIVED, BUSY, INVALID, ... */
@@ -85,10 +86,26 @@ export function findSwap(session: LcuSession, kind: SwapKind, cellId: number): L
   return list.find((s) => s && s.cellId === cellId && Number.isInteger(s.id)) ?? null;
 }
 
+/** This player has locked in a pick (their pick actions are all completed). */
+export function hasLockedPickCell(session: LcuSession, cellId: number): boolean {
+  const picks = flatActions(session).filter((a) => a.actorCellId === cellId && a.type === "pick");
+  return picks.length > 0 && picks.every((a) => a.completed);
+}
+
+/**
+ * League keeps offering a pick-order swap after one of us has locked in, but the request does
+ * nothing then (live draft, 2026-11-14), so it only counts while both of us still have to pick.
+ */
+export function pickOrderSwapPossible(session: LcuSession, cellId: number): boolean {
+  return !hasLockedPickCell(session, cellId) && !hasLockedPickCell(session, session.localPlayerCellId);
+}
+
 function swapsWith(session: LcuSession, cellId: number): ChampSelectPlayer["swaps"] {
   const out: ChampSelectPlayer["swaps"] = {};
   for (const kind of Object.keys(SWAP_FIELDS) as SwapKind[]) {
-    const state = SWAP_STATES[findSwap(session, kind, cellId)?.state ?? ""];
+    const raw = findSwap(session, kind, cellId)?.state ?? "";
+    if (kind === "pickOrder" && raw === "AVAILABLE" && !pickOrderSwapPossible(session, cellId)) continue;
+    const state = SWAP_STATES[raw];
     if (state) out[kind] = state;
   }
   return out;
@@ -176,11 +193,21 @@ export function findHoverTarget(session: LcuSession): LcuAction | null {
 }
 
 export function hasLockedPick(session: LcuSession): boolean {
-  const myPicks = flatActions(session).filter(
-    (a) => a.actorCellId === session.localPlayerCellId && a.type === "pick",
-  );
-  // No pick actions at all (e.g. ARAM): treat as "nothing to lock".
-  return myPicks.length > 0 && myPicks.every((a) => a.completed);
+  // No pick actions at all: treat as "nothing to lock".
+  return hasLockedPickCell(session, session.localPlayerCellId);
+}
+
+/** Champions someone has locked in (either team). Empty in modes that allow duplicate picks. */
+export function lockedChampions(session: LcuSession): number[] {
+  if (session.allowDuplicatePicks) return [];
+  const ids = flatActions(session).filter((a) => a.type === "pick" && a.completed).map((a) => a.championId);
+  return positiveIds(ids);
+}
+
+/** All banned champions, both teams. */
+export function bannedChampions(session: LcuSession): number[] {
+  const b = bans(session);
+  return positiveIds([...b.myTeam, ...b.theirTeam]);
 }
 
 const positiveIds = (list: unknown): number[] =>
@@ -300,6 +327,7 @@ export function deriveChampSelect(
     bannableChampionIds: (bannable ?? []).filter((n) => Number.isInteger(n) && n > 0),
     mySpells: [pos(me?.spell1Id), pos(me?.spell2Id)],
     mySkinId: pos(me?.selectedSkinId),
+    lockedChampionIds: lockedChampions(session),
     bench: session.isSpectating ? null : benchChampions(session),
     rerollsLeft: rerollsLeft(session),
     choices: session.allowSubsetChampionPicks ? positiveIds(subset) : [],

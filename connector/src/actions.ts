@@ -12,7 +12,18 @@ import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import { SWAP_KINDS, type SwapKind } from "./shared/phone-api";
-import { benchChampions, findHoverTarget, findMyActiveAction, findSwap, rerollsLeft, type LcuAction, type LcuSession } from "./state/champ-select";
+import {
+  bannedChampions,
+  benchChampions,
+  findHoverTarget,
+  findMyActiveAction,
+  findSwap,
+  lockedChampions,
+  pickOrderSwapPossible,
+  rerollsLeft,
+  type LcuAction,
+  type LcuSession,
+} from "./state/champ-select";
 import { log } from "./log";
 import { championIds, URI } from "./state/store";
 
@@ -163,6 +174,11 @@ function noteFallback(type: string): void {
 }
 
 async function assertAllowed(http: LcuHttp, ctx: ActionContext, action: LcuAction, championId: number, session?: LcuSession): Promise<void> {
+  // League's pickable list doesn't drop banned champions (live draft, 2026-11-14), so say why here.
+  if (action.type === "pick" && session) {
+    if (bannedChampions(session).includes(championId)) throw new ActionError(400, "That champion is banned");
+    if (lockedChampions(session).includes(championId)) throw new ActionError(400, "Someone already picked that champion");
+  }
   const allowed = await allowedChampions(http, ctx, action.type, session);
   if (!allowed.has(championId)) {
     throw new ActionError(400, action.type === "ban" ? "That champion can't be banned" : "That champion isn't pickable");
@@ -253,6 +269,9 @@ function swapAction(verb: SwapVerb): ActionDef {
       const swap = findSwap(session, kind, cellId);
       const need = SWAP_NEEDS[verb];
       if (!swap || swap.state !== need.state) throw new ActionError(409, need.error);
+      if (verb === "request" && kind === "pickOrder" && !pickOrderSwapPossible(session, cellId)) {
+        throw new ActionError(409, "One of you has already picked, so there's no pick order to swap");
+      }
       if (!Number.isInteger(swap.id) || swap.id < 0) throw new ActionError(500, "invalid swap id from client");
       for (const base of SWAP_PATHS[kind]) {
         if ((await call(http, "POST", `${base}/${swap.id}/${verb}`)) !== 404) return;

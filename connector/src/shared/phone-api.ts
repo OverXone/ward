@@ -104,6 +104,8 @@ export interface ChampSelectView {
   /** My summoner spells [D, F] (0 = none) and selected skin (0 = default / none yet). */
   mySpells: [number, number];
   mySkinId: number;
+  /** Champions someone has locked in, either team (they can't be picked again). */
+  lockedChampionIds: number[];
   /** ARAM-style bench: champions I can swap mine for (null = this mode has no bench). */
   bench: number[] | null;
   /** Rerolls I have left (null = this mode doesn't allow rerolling). */

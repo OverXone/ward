@@ -41,8 +41,12 @@ export function draftSession(opts: { phase?: string; withInProgressFlag?: boolea
   };
 }
 
-/** Marks every group before `groupIndex` completed and sets `groupIndex` in progress. */
-export function advanceTo(s: LcuSession, groupIndex: number, champ = (a: LcuAction) => 100 + a.actorCellId): LcuSession {
+/** Marks every group before `groupIndex` completed and sets `groupIndex` in progress. Bans 100+cell, picks 300+cell. */
+export function advanceTo(
+  s: LcuSession,
+  groupIndex: number,
+  champ = (a: LcuAction) => (a.type === "pick" ? 300 : 100) + a.actorCellId,
+): LcuSession {
   s.actions.forEach((group, i) => {
     for (const a of group) {
       if (i < groupIndex) {

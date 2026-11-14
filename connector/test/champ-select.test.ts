@@ -202,3 +202,28 @@ describe("ARAM and choose-from-a-few modes", () => {
     expect(describeMode(subsetSession(), [1, 2])).toContain("actions: 10 pick; bench off; rerolls off; subset 2");
   });
 });
+
+describe("banned and taken champions, impossible swaps", () => {
+  it("lists champions locked in by either team", () => {
+    const v = deriveChampSelect(advanceTo(draftSession(), 4), [], []);
+    expect(v.lockedChampionIds).toEqual([300, 305, 306]);
+  });
+
+  it("drops a pick-order swap once the teammate has locked in, but keeps the role swap", () => {
+    const s = advanceTo(draftSession(), 3); // cell 0 has picked; I (cell 2) haven't
+    s.positionSwaps = [{ cellId: 0, id: 12, state: "AVAILABLE" }];
+    s.pickOrderSwaps = [
+      { cellId: 0, id: 12, state: "AVAILABLE" },
+      { cellId: 3, id: 14, state: "AVAILABLE" },
+    ];
+    const byCell = new Map(deriveChampSelect(s, [], []).myTeam.map((p) => [p.cellId, p.swaps]));
+    expect(byCell.get(0)).toEqual({ position: "available" });
+    expect(byCell.get(3)).toEqual({ pickOrder: "available" });
+  });
+
+  it("drops every pick-order swap once I've locked in", () => {
+    const s = advanceTo(draftSession(), 5); // cells 1 and 2 picked
+    s.pickOrderSwaps = [{ cellId: 3, id: 14, state: "AVAILABLE" }];
+    expect(deriveChampSelect(s, [], []).myTeam.find((p) => p.cellId === 3)?.swaps).toEqual({});
+  });
+});

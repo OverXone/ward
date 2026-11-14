@@ -77,8 +77,8 @@ describe("champ select", () => {
     const s = advanceTo(draftSession(), 4);
     const myId = s.actions[4]!.find((a) => a.actorCellId === 2)!.id;
     const lcu = csLcu(s, { [`PATCH /lol-champ-select/v1/session/actions/${myId}`]: ok() });
-    await run("champ-select/hover", { championId: 103 }, lcu.http);
-    expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${myId}`, body: { championId: 103 } }]);
+    await run("champ-select/hover", { championId: 222 }, lcu.http);
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${myId}`, body: { championId: 222 } }]);
   });
 
   it("validates against the bannable list during my ban", async () => {
@@ -116,14 +116,14 @@ describe("champ select", () => {
   }
 
   it("locks with PATCH {completed:true} and verifies it", async () => {
-    const { lcu, path } = lockSetup(103, (mine) => ({
+    const { lcu, path } = lockSetup(222, (mine) => ({
       [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: (body) => {
         if ((body as { completed?: boolean }).completed) mine.completed = true;
         return { status: 204 };
       },
     }));
     await run("champ-select/lock", {}, lcu.http);
-    expect(lcu.writes()).toEqual([{ method: "PATCH", path, body: { championId: 103, completed: true } }]);
+    expect(lcu.writes()).toEqual([{ method: "PATCH", path, body: { championId: 222, completed: true } }]);
   });
 
   it("falls back to POST /complete when the PATCH doesn't lock", async () => {
@@ -136,7 +136,7 @@ describe("champ select", () => {
   });
 
   it("reports an error instead of pretending, when nothing locks", async () => {
-    const { lcu } = lockSetup(103, (mine) => ({
+    const { lcu } = lockSetup(222, (mine) => ({
       [`PATCH /lol-champ-select/v1/session/actions/${mine.id}`]: ok(),
       [`POST /lol-champ-select/v1/session/actions/${mine.id}/complete`]: ok(),
     }));
@@ -351,5 +351,30 @@ describe("ARAM bench and rerolls", () => {
     await run("champ-select/hover", { championId: 8 }, lcu.http);
     expect(lcu.writes()).toEqual([{ method: "PATCH", path: `/lol-champ-select/v1/session/actions/${mine.id}`, body: { championId: 8 } }]);
     await expectError(run("champ-select/hover", { championId: 9 }, lcu.http), 400, /pickable/);
+  });
+});
+
+describe("banned and taken champions, impossible swaps", () => {
+  const lcu = (session: object, extra: Record<string, Route> = {}) =>
+    fakeLcu({
+      "GET /lol-champ-select/v1/session": ok(session),
+      "GET /lol-champ-select/v1/pickable-champion-ids": ok([103, 305, 222]), // League keeps banned ones in
+      ...extra,
+    });
+
+  it("refuses to hover a banned or locked-in champion for my pick", async () => {
+    const s = advanceTo(draftSession(), 4); // cell 3 banned 103, cell 5 locked 305
+    const l = lcu(s);
+    await expectError(run("champ-select/hover", { championId: 103 }, l.http), 400, /is banned/);
+    await expectError(run("champ-select/hover", { championId: 305 }, l.http), 400, /already picked/);
+    expect(l.writes()).toHaveLength(0);
+  });
+
+  it("refuses a pick-order swap with a teammate who has already picked", async () => {
+    const s = advanceTo(draftSession(), 3);
+    s.pickOrderSwaps = [{ cellId: 0, id: 12, state: "AVAILABLE" }];
+    const l = lcu(s, { "POST /lol-champ-select/v1/session/pick-order-swaps/12/request": ok({}) });
+    await expectError(run("champ-select/swap/request", { kind: "pickOrder", cellId: 0 }, l.http), 409, /already picked/);
+    expect(l.writes()).toHaveLength(0);
   });
 });

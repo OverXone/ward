@@ -61,14 +61,20 @@ const teammateWants = computed(() => {
   }
   return ids;
 });
-const reasons = computed(() =>
-  mode.value === "ban" ? new Map([...teammateWants.value].map((id) => [id, "Teammate's pick"])) : undefined,
-);
+// League's pickable list keeps banned champions, so mark them (and locked-in ones) ourselves.
+const reasons = computed(() => {
+  if (mode.value === "ban") return new Map([...teammateWants.value].map((id) => [id, "Teammate's pick"]));
+  const why = new Map<number, string>();
+  for (const id of props.cs.lockedChampionIds) why.set(id, "Picked");
+  for (const id of [...props.cs.bans.myTeam, ...props.cs.bans.theirTeam]) why.set(id, "Banned");
+  return why;
+});
 // Modes that offer each player only a few champions show just those, as big tiles.
 const choices = computed(() => props.cs.choices);
 const hasBench = computed(() => props.cs.bench !== null || !!props.cs.rerollsLeft);
 
-const banBlocked = computed(() => props.cs.myTurn?.type === "ban" && teammateWants.value.has(serverSelected.value));
+// Why the hovered champion can't be locked in (teammate's pick when banning; banned or taken when picking).
+const blocked = computed(() => (props.cs.myTurn ? (reasons.value.get(serverSelected.value) ?? null) : null));
 
 // Swap requests (role, pick order, champion trade) in both directions.
 const swapRequests = computed<SwapRequest[]>(() =>
@@ -105,7 +111,7 @@ async function lock() {
   busy.value = false;
 }
 
-const canLock = computed(() => !!props.cs.myTurn && serverSelected.value > 0 && !busy.value && !banBlocked.value);
+const canLock = computed(() => !!props.cs.myTurn && serverSelected.value > 0 && !busy.value && !blocked.value);
 
 const headline = computed(() => {
   const cs = props.cs;
@@ -221,7 +227,9 @@ const seconds = computed(() => champSelectSecondsLeft());
       <button class="btn btn-huge lock" :class="cs.myTurn.type === 'ban' ? 'btn-danger' : 'btn-accept'" :disabled="!canLock" @click="lock">
         <template v-if="busy">{{ cs.myTurn.type === "ban" ? "Banning" : "Locking in" }} {{ championName(serverSelected) }}…</template>
         <template v-else-if="!serverSelected">{{ cs.myTurn.type === "ban" ? "Choose a ban" : "Choose a champion" }}</template>
-        <template v-else-if="banBlocked">A teammate wants {{ championName(serverSelected) }}</template>
+        <template v-else-if="blocked === 'Banned'">{{ championName(serverSelected) }} is banned</template>
+        <template v-else-if="blocked === 'Picked'">{{ championName(serverSelected) }} is taken</template>
+        <template v-else-if="blocked">A teammate wants {{ championName(serverSelected) }}</template>
         <template v-else>{{ cs.myTurn.type === "ban" ? "Ban" : "Lock in" }} {{ championName(serverSelected) }}</template>
       </button>
     </div>
