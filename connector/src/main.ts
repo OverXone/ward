@@ -4,12 +4,14 @@
  *   ward                 run the LAN server for the phone
  *   ward --events        test mode: print LCU events, no server
  *
- * Options: --host <lan-ip>  --port <n>  --league-dir <path>  --all  --dump  --help
+ * Options: --host <lan-ip>  --port <n>  --league-dir <path>  --no-update-check  --all  --dump  --help
  */
 
+import { rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
+import * as sea from "node:sea";
 import { parseArgs } from "node:util";
 import QRCode from "qrcode";
 import { Champions } from "./champions";
@@ -25,9 +27,20 @@ import { defaultDataDir, Devices, type Phone } from "./server/devices";
 import { createHttpServer, expectedHost } from "./server/http";
 import { isPrivateIPv4, lanCandidates } from "./server/net";
 import { attachPhoneSocket } from "./server/phone-ws";
+import {
+  checkForUpdate,
+  cleanUpAfterUpdate,
+  downloadUpdate,
+  JUST_UPDATED_ENV,
+  relaunch,
+  swapInPlace,
+  type UpdateManifest,
+} from "./update";
+import { VERSION } from "./version";
 
-const VERSION = "0.3.0";
 const DEFAULT_PORT = 47800;
+const RELEASES_URL = "https://github.com/OverXone/ward/releases/latest";
+const UPDATE_CHECK_EVERY_MS = 6 * 60 * 60 * 1000;
 
 const HELP = `Ward ${VERSION}: control the League client from your phone (same Wi-Fi).
 
@@ -39,6 +52,7 @@ Usage: ward [options]
   --host <ip>         LAN IPv4 to listen on (default: auto-detected Wi-Fi/Ethernet address)
   --port <n>          Port to listen on (default ${DEFAULT_PORT})
   --league-dir <dir>  Use only the lockfile in this folder (skip process detection)
+  --no-update-check   Don't check GitHub for a newer Ward (Ward.exe only)
   -h, --help          Show this help
 `;
 
@@ -106,7 +120,62 @@ async function printBanner(opts: {
   log.plain('  Keep this window open while you play. Type "phones" to list phones, Ctrl+C to quit.\n');
 }
 
-function runServer(opts: { host?: string; port: number; leagueDir?: string }): void {
+const mb = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
+
+/**
+ * Downloads `manifest`'s exe, puts it in place of this one, then calls `stop` and starts the new
+ * Ward in a fresh window. Returns false (with Ward.exe untouched) if anything before the swap fails;
+ * the caller carries on with the current version.
+ */
+async function installUpdate(manifest: UpdateManifest, stop: () => void): Promise<boolean> {
+  const exe = process.execPath;
+  const next = `${exe}.new`;
+  log.plain(`  Downloading Ward ${manifest.version} (${mb(manifest.size)})...`);
+  const tty = process.stdout.isTTY;
+  try {
+    await downloadUpdate({
+      manifest,
+      dest: next,
+      current: VERSION,
+      onProgress: (p) => tty && process.stdout.write(`\r  ${p}%`),
+    });
+    if (tty) process.stdout.write("\n");
+  } catch (e) {
+    if (tty) process.stdout.write("\n");
+    log.plain(`  The update didn't download (${(e as Error).message}). Carrying on with ${VERSION}.`);
+    return false;
+  }
+  try {
+    swapInPlace(exe, next);
+  } catch (e) {
+    rmSync(next, { force: true });
+    log.plain(`  Couldn't replace ${path.basename(exe)} (${(e as Error).message}).`);
+    log.plain(`  Carrying on with ${VERSION}. To update, download Ward ${manifest.version} from ${RELEASES_URL}`);
+    return false;
+  }
+  stop();
+  if (relaunch(exe, process.argv.slice(2), manifest.version)) {
+    log.plain(`  Updated to Ward ${manifest.version}. Restarting in a new window...`);
+    process.exit(0);
+  }
+  // Only when an argument can't be passed through cmd.exe safely (it contains " % or ^).
+  exitWithError(`Updated to Ward ${manifest.version}. Start ${path.basename(exe)} again (with the same options).`);
+  return true;
+}
+
+/** Checked once before the server starts, so updating never interrupts a connected phone. */
+async function updateAtStartup(): Promise<boolean> {
+  log.plain(`  Ward ${VERSION}: checking for updates...`);
+  const result = await checkForUpdate({ current: VERSION });
+  if (result.kind === "error") {
+    log.plain(`  Couldn't check for updates (${result.message}). Starting anyway.`);
+    return false;
+  }
+  if (result.kind === "current") return false;
+  return installUpdate(result.manifest, () => {});
+}
+
+function runServer(opts: { host?: string; port: number; leagueDir?: string; updates: boolean }): void {
   const devices = new Devices({ file: path.join(defaultDataDir(), "phones.json") });
   const previousAddress = devices.previousAddress;
   const candidates = lanCandidates();
@@ -180,7 +249,13 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
   });
   const phoneSocket = attachPhoneSocket(server, { host: expectedHost({ host: lanHost, port: opts.port }), devices, limiter, store });
 
+  // Right after an update the previous Ward may still be letting go of the port.
+  let portRetries = process.env[JUST_UPDATED_ENV] ? 10 : 0;
   server.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code === "EADDRINUSE" && portRetries-- > 0) {
+      setTimeout(() => server.listen(opts.port, lanHost), 500);
+      return;
+    }
     manager.stop();
     if (e.code === "EADDRINUSE") exitWithError(`Port ${opts.port} is already in use. Is Ward already running? (or use --port)`);
     else if (e.code === "EADDRNOTAVAIL") exitWithError(`Can't listen on ${lanHost}. Did the network change? Try again or use --host.`);
@@ -195,10 +270,56 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     );
   });
 
+  let rl: readline.Interface | null = null;
+  const stop = () => {
+    rl?.close();
+    phoneSocket.close();
+    manager.stop();
+    server.close();
+  };
+
+  // While running: look for a new release now and then, and say so once. Typing "update" installs it.
+  let available: UpdateManifest | null = null;
+  let updating = false;
+  const checkNow = async (): Promise<void> => {
+    const result = await checkForUpdate({ current: VERSION });
+    if (result.kind !== "update" || result.manifest.version === available?.version) return;
+    available = result.manifest;
+    log.plain(
+      `\n  Ward ${available.version} is available. Type "update" to install it and restart (phones reconnect by themselves).\n`,
+    );
+  };
+  if (opts.updates) setInterval(() => void checkNow(), UPDATE_CHECK_EVERY_MS).unref();
+
+  const runUpdate = async (): Promise<void> => {
+    if (!sea.isSea()) return log.plain("\n  Updating only works in Ward.exe. From source, use git pull.\n");
+    if (updating) return;
+    updating = true;
+    try {
+      if (!available) {
+        log.plain("");
+        const result = await checkForUpdate({ current: VERSION });
+        if (result.kind === "error") return log.plain(`  Couldn't check for updates (${result.message}).\n`);
+        if (result.kind === "current") return log.plain(`  Ward ${VERSION} is the latest version.\n`);
+        available = result.manifest;
+      }
+      log.plain("");
+      await installUpdate(available, stop);
+      log.plain("");
+    } finally {
+      updating = false;
+    }
+  };
+
   if (process.stdin.isTTY) {
-    const rl = readline.createInterface({ input: process.stdin });
+    rl = readline.createInterface({ input: process.stdin });
     rl.on("line", (line) => {
       const cmd = line.trim().toLowerCase();
+      if (updating) return;
+      if (cmd === "update") {
+        void runUpdate();
+        return;
+      }
       if (cmd === "phones") {
         log.plain("");
         printPhones(devices.list());
@@ -219,7 +340,9 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
         return;
       }
       if (cmd !== "") {
-        log.plain('\n  Commands: Enter = new QR code and pairing code, "phones", "forget <number>", "forget all".\n');
+        log.plain(
+          '\n  Commands: Enter = new QR code and pairing code, "phones", "forget <number>", "forget all", "update".\n',
+        );
         return;
       }
       log.plain("");
@@ -229,16 +352,14 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
 
   const shutdown = () => {
     log.info("Shutting down.");
-    phoneSocket.close();
-    manager.stop();
-    server.close();
+    stop();
     process.exit(0);
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
 
-function main(): void {
+async function main(): Promise<void> {
   let values: Record<string, string | boolean | undefined>;
   try {
     ({ values } = parseArgs({
@@ -249,6 +370,7 @@ function main(): void {
         host: { type: "string" },
         port: { type: "string" },
         "league-dir": { type: "string" },
+        "no-update-check": { type: "boolean" },
         help: { type: "boolean", short: "h" },
       },
       strict: true,
@@ -274,12 +396,15 @@ function main(): void {
   const port = values.port === undefined ? DEFAULT_PORT : Number(values.port);
   if (!Number.isInteger(port) || port < 1024 || port > 65535) fatal("--port must be a number between 1024 and 65535");
 
-  runServer({ host: typeof values.host === "string" ? values.host : undefined, port, leagueDir });
+  // Only the packaged exe updates itself; from source, git pull does that.
+  const updates = sea.isSea() && !values["no-update-check"];
+  if (sea.isSea()) cleanUpAfterUpdate(process.execPath);
+  const justUpdated = process.env[JUST_UPDATED_ENV];
+  if (justUpdated) log.plain(`  Ward updated to ${VERSION}.`);
+  else if (updates && (await updateAtStartup())) return;
+
+  runServer({ host: typeof values.host === "string" ? values.host : undefined, port, leagueDir, updates });
 }
 
 process.on("uncaughtException", (e) => exitWithError(`Unexpected error: ${e.message}`));
-try {
-  main();
-} catch (e) {
-  exitWithError(e instanceof FatalError ? e.message : `Unexpected error: ${(e as Error).message}`);
-}
+main().catch((e) => exitWithError(e instanceof FatalError ? e.message : `Unexpected error: ${(e as Error).message}`));

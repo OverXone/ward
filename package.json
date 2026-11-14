@@ -18,6 +18,7 @@
     "typecheck": "npm run typecheck -w connector",
     "build:web": "npm run build -w web",
     "build:exe": "node scripts/build-exe.mjs",
+    "sign:exe": "node scripts/sign-release.mjs",
     "watch:web": "npm run watch -w web"
   },
   "devDependencies": {

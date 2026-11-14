@@ -10,7 +10,7 @@ Control your League of Legends client from your phone over your home Wi-Fi. Step
 - join or decline lobby invitations, and invite online friends to your lobby
 - read and write in the lobby chat and your team's champ select chat
 
-There's no cloud and no accounts. Everything stays on your local network.
+There's no cloud and no accounts. Everything stays on your local network. The only thing Ward fetches from the internet is its own updates, from this GitHub repository.
 
 **[Download the latest Ward.exe](https://github.com/OverXone/ward/releases/latest)** (Windows)
 
@@ -26,6 +26,7 @@ There's no cloud and no accounts. Everything stays on your local network.
 4. **Keep the window open while you play.** Start League whenever you like; the connector finds it on its own.
 
 Good to know:
+- **Ward updates itself.** Each time you start it, it checks GitHub for a newer version. If there is one, it downloads it, replaces `Ward.exe` and restarts in a new window. Phones reconnect and load the new version by themselves. While it runs, it checks every few hours and tells you when an update is out; type `update` to install it. Every update is signed, and Ward installs only files signed with its release key. To turn this off, start it with `Ward.exe --no-update-check`. Versions before 0.4.0 don't update themselves, so download 0.4.0 once by hand.
 - **The PC remembers your phone.** After you pair once, the phone connects by itself every time you start Ward. The window lists remembered phones at startup. To remove one, type `forget 1` (its number) or `forget all` in the window, or tap **Unpair this phone** on the phone. A phone that hasn't connected for 30 days is forgotten.
 - **Pairing another phone:** the QR code works once, and the typed code works once for 5 minutes. Press **Enter** in the window for new ones. Type `phones` to list remembered phones.
 - **If your PC's address changes** (rare: your router usually gives the PC the same one each time), the window says so. Scan the QR code once more, and add the home-screen icon again, because the old icon points to the old address.
@@ -90,6 +91,7 @@ The connector prints a QR code and a pairing code. Your phone must be on the sam
 Each paired phone gets its own random key. The connector saves only a SHA-256 hash of it, in `%APPDATA%\Ward\phones.json`. Set `WARD_DATA_DIR` to use another folder (the smoke test does). Commands in the window: Enter (new QR code and code), `phones`, `forget <number>`, `forget all`.
 
 Options:
+- `--no-update-check` doesn't look for updates (only `Ward.exe` updates itself; from source it never does).
 - `--host <ip>` picks the network adapter.
 - `--port <n>` changes the port (default 47800).
 - `--league-dir <dir>` uses only the lockfile in that folder.
@@ -103,6 +105,17 @@ npm run build:exe      # -> dist/Ward.exe
 ```
 
 This builds the phone UI and bundles the connector with esbuild. Then it embeds both into a copy of your `node.exe` as a Node single executable application (SEA). Before that, `resedit` replaces the copy's version info and icon, so Windows shows "Ward" instead of "Node.js JavaScript Runtime". It also drops Node's code signature, which the injection would break anyway. Build on Windows with Node 24. The exe isn't signed.
+
+### Release a version
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`), so every user gets the update:
+
+1. Bump `version` in `package.json` (and in `connector/package.json` and `web/package.json`), then commit.
+2. Tag and push: `git tag v0.4.0`, then `git push origin main v0.4.0`.
+3. The workflow checks that the tag matches `package.json`, runs the tests, builds `Ward.exe`, signs it and attaches `Ward.exe` and `ward-update.json` to a **draft** release.
+4. On GitHub, write the notes and click **Publish**. Running copies of Ward see the update only once it's published.
+
+The signature: `ward-update.json` holds the version, SHA-256 and size of `Ward.exe`, signed with an ed25519 key. The public half is `UPDATE_PUBLIC_KEY` in `connector/src/update.ts`. The private half is the repository secret `WARD_UPDATE_KEY` (the PEM text), and only the workflow uses it. Keep an offline copy: if it's lost, installed copies can't verify updates any more, and users have to download the next version by hand. To sign a local build: `npm run sign:exe -- --key <file.pem>`.
 
 The logo is `branding/ward.svg`. `scripts/logo.mjs` draws the same artwork for the exe icon and the phone icons (`npm run icons -w web` rewrites the ones in `web/public`).
 
@@ -137,6 +150,7 @@ Keys in the mock window:
 - **TLS verification is skipped for 127.0.0.1 only.** It's turned off on one HTTPS agent that only talks to the local League client. It's never turned off globally.
 - **No secrets in the console.** The token and the League client password are never printed. The token only appears encoded inside the QR code.
 - **Plain HTTP on your LAN.** That's fine on your own home Wi-Fi. Don't use it on public or shared Wi-Fi.
+- **Signed updates.** `Ward.exe` installs an update only if its version, SHA-256 and size are signed by the release key built into it. A newer version number is required, so an old release can't be passed off as an update.
 
 This uses the League client's unofficial local API, the same way Mimic, Blitz and Porofessor do.
 

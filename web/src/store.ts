@@ -165,8 +165,9 @@ function openSocket(): void {
   socket = api.connectSocket({
     onState,
     onStatus: (s) => {
+      // Every state push reports "open"; only a (re)connect can mean Ward was restarted or updated.
+      if (s === "open" && app.socket !== "open") void checkForNewVersion();
       app.socket = s;
-      if (s === "open") void checkForNewVersion();
     },
     onUnauthorized: () => {
       unpair();

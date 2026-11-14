@@ -93,6 +93,8 @@ await build({
   format: "cjs",
   // Optional native speed-ups that ws tries to load; it works without them.
   external: ["bufferutil", "utf-8-validate"],
+  // The version the self-updater compares releases against (connector/src/version.ts).
+  define: { __WARD_VERSION__: JSON.stringify(version) },
   legalComments: "eof",
   logLevel: "warning",
 });
