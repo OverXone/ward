@@ -13,6 +13,7 @@ import readline from "node:readline";
 import { parseArgs } from "node:util";
 import QRCode from "qrcode";
 import { Champions } from "./champions";
+import { CHAT_CONVERSATIONS } from "./chat";
 import { runEventsMode } from "./cli/events";
 import { LcuManager } from "./lcu/manager";
 import { Loadout } from "./loadout";
@@ -154,7 +155,7 @@ function runServer(opts: { host?: string; port: number; leagueDir?: string }): v
     if (!r.credentials) log.info(`Waiting for the League client (${r.notes.join("; ")})`);
   });
   manager.on("event", (e) => {
-    if (WATCHED_URIS.has(e.uri)) store.handleEvent(e);
+    if (WATCHED_URIS.has(e.uri) || e.uri.startsWith(CHAT_CONVERSATIONS)) store.handleEvent(e);
   });
   store.on("phase", (p) => log.info(`Game phase: ${p ?? "unknown"}`));
 

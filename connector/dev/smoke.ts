@@ -122,6 +122,19 @@ async function main() {
   mockKey("l");
   await waitFor("own lobby again", () => state?.lobby?.queueName === "Ranked Solo/Duo" && state.lobby.isLeader);
 
+  // --- lobby chat ---
+  const said = () => (state?.chat?.messages ?? []).map((m) => (m.kind === "message" ? `${m.from}: ${m.text}` : `${m.from} ${m.kind}`));
+  await waitFor("lobby chat", () => state?.chat?.kind === "lobby" && state.chat.ready);
+  check(state!.chat!.messages.length === 0, "lobby chat joined, private chats not shown");
+  mockKey("w");
+  await waitFor("teammate wrote", () => said().join("|") === "DuoPartner joined|DuoPartner: ready? <b>not bold</b>");
+  check(true, "teammate's message and join shown with their name");
+  check((await act("chat/send", { text: "  hola\nequipo " })).status === 204, "send a lobby chat message");
+  await waitFor("my message + reply", () => said().slice(-2).join("|") === "You: hola equipo|DuoPartner: 👍");
+  check(state!.chat!.messages.at(-2)!.isMe, "my message shown as mine, then the reply");
+  check((await act("chat/send", { text: "x".repeat(201) })).status === 400, "too-long chat message refused");
+  const lobbyRoom = state!.chat!.room;
+
   check((await act("queue/cancel")).status === 409, "cancel queue refused while not queued");
   check((await act("queue/start")).status === 204, "start queue");
   await waitFor("Matchmaking", () => state?.phase === "Matchmaking" && state.queue);
@@ -136,6 +149,15 @@ async function main() {
   const icon = await fetch(base + "/api/champions/103/icon", { headers: { Authorization: `Bearer ${token}` } });
   check(icon.status === 200 && icon.headers.get("content-type") === "image/png", "champion icon proxied");
   check((await fetch(base + "/api/champions/999999/icon", { headers: { Authorization: `Bearer ${token}` } })).status === 404, "unknown champion icon → 404");
+
+  // --- champ select chat ---
+  await waitFor("team chat", () => state?.chat?.kind === "champSelect" && state.chat.ready);
+  check(state!.chat!.room !== lobbyRoom && state!.chat!.messages.length === 0, "champ select has its own, empty chat");
+  check((await act("chat/send", { text: "mid?" })).status === 204, "send a champ select chat message");
+  await waitFor("team reply", () => said().join("|") === "You: mid?|JungleDiff: ok");
+  mockKey("w");
+  await waitFor("teammate wrote in champ select", () => said().at(-1)?.startsWith("Teemo Enjoyer: I'll go top"));
+  check(true, "teammates' champ select messages shown with their names");
 
   // --- planning: intent ---
   check(state!.champSelect!.phase === "PLANNING" && state!.champSelect!.canHoverIntent, "planning phase allows intent");

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { LobbyView } from "@shared/phone-api";
 import { computed, ref } from "vue";
+import ChatButton from "../components/ChatButton.vue";
 import FriendsSheet from "../components/FriendsSheet.vue";
 import { run } from "../store";
 
@@ -29,6 +30,7 @@ async function startQueue() {
       <h1 class="title">{{ lobby?.queueName ?? "Lobby" }}</h1>
       <p class="sub" v-if="lobby">{{ lobby.memberCount }} {{ lobby.memberCount === 1 ? "player" : "players" }} in party</p>
     </div>
+    <ChatButton />
     <div class="tools">
       <button v-if="lobby?.canInvite" class="btn btn-ghost invite" @click="inviting = true">Invite friends</button>
     </div>

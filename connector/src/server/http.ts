@@ -222,6 +222,7 @@ export function createRequestHandler(deps: ServerDeps) {
         throw e;
       }
       log.info(`Action ${name} ok`);
+      if (name === "chat/send") deps.store.chat.refreshSoon(); // show the sent message right away
       res.writeHead(204, { "Cache-Control": "no-store" });
       res.end();
       return;

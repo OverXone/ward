@@ -78,6 +78,11 @@ export function invitationAlert(): void {
   chime([784, 988, 1175]);
 }
 
+/** A teammate wrote in chat: a short buzz only, no sound (chat can be busy). */
+export function chatAlert(): void {
+  vibrate([60]);
+}
+
 export function stopVibration(): void {
   vibrate([0]);
 }

@@ -146,6 +146,34 @@ export interface FriendOption {
   canInvite: boolean;
 }
 
+/** Which group chat: my lobby's (also while queued) or my team's in champ select. */
+export type ChatRoomKind = "lobby" | "champSelect";
+
+export interface ChatMessage {
+  /** Grows with every new message the connector sees, so a higher id is newer. */
+  id: number;
+  /** joined / left: someone came into or left the lobby (lobby chat only). */
+  kind: "message" | "joined" | "left";
+  /** "You", the sender's Riot ID game name, their champ-select label ("Ally 2"), or "Someone". */
+  from: string;
+  isMe: boolean;
+  /** The sender's champion in champ select (0 = none, and always 0 in the lobby). */
+  championId: number;
+  text: string;
+  /** Epoch ms (0 = League didn't say). */
+  time: number;
+}
+
+export interface ChatView {
+  /** Opaque name for this room; a new lobby or champ select gets a new one. */
+  room: string;
+  kind: ChatRoomKind;
+  /** League has joined the room's chat, so messages can be sent. */
+  ready: boolean;
+  /** Oldest first, at most the last 60. */
+  messages: ChatMessage[];
+}
+
 export interface PhoneState {
   lcu: LcuStatus;
   phase: GameflowPhase | null;
@@ -154,6 +182,8 @@ export interface PhoneState {
   readyCheck: ReadyCheckView | null;
   champSelect: ChampSelectView | null;
   invitations: InvitationView[];
+  /** The chat of the lobby or champ select I'm in (null when there's none). */
+  chat: ChatView | null;
 }
 
 export interface ChampionSummary {

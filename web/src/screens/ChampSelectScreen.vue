@@ -5,6 +5,7 @@ import { myTurnAlert, swapRequestAlert } from "../alerts";
 import BenchPanel from "../components/BenchPanel.vue";
 import ChampGrid from "../components/ChampGrid.vue";
 import ChampIcon from "../components/ChampIcon.vue";
+import ChatButton from "../components/ChatButton.vue";
 import LoadoutBar from "../components/LoadoutBar.vue";
 import SwapRequests, { type SwapRequest } from "../components/SwapRequests.vue";
 import SwapSheet from "../components/SwapSheet.vue";
@@ -166,6 +167,7 @@ const seconds = computed(() => champSelectSecondsLeft());
         <p v-if="subline" class="subline">{{ subline }}</p>
       </div>
       <div v-if="!cs.isInfinite" class="clock mono" :class="{ low: seconds <= 5 }">{{ seconds }}</div>
+      <ChatButton compact />
     </header>
 
     <div class="bans" v-if="cs.bans.myTeam.length || cs.bans.theirTeam.length">

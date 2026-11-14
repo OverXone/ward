@@ -11,7 +11,7 @@
  *
  * Keys: l=lobby  q=queue  r=ready check  c=champ select  n=finish current turn  g=in game  0=none  h=help
  *       s / o / t = a teammate asks you to swap roles / pick order / champions
- *       i = a friend invites you to their lobby
+ *       i = a friend invites you to their lobby   w = a teammate writes in the lobby / champ select chat
  *       f = freeze (stop answering HTTP, like a hung client); f again to thaw
  */
 
@@ -180,8 +180,102 @@ const URIS = {
 function set(uri: string, value: unknown): void {
   if (value === null || value === undefined) delete state[uri];
   else state[uri] = value;
-  const msg = JSON.stringify([8, "OnJsonApiEvent", { uri, eventType: value == null ? "Delete" : "Update", data: value ?? null }]);
+  emit(uri, value == null ? "Delete" : "Update", value ?? null);
+}
+
+function emit(uri: string, eventType: string, data: unknown): void {
+  const msg = JSON.stringify([8, "OnJsonApiEvent", { uri, eventType, data }]);
   for (const ws of sockets) if (ws.readyState === WebSocket.OPEN) ws.send(msg);
+}
+
+// ---------- chat ----------
+
+const CHAT = "/lol-chat/v1/conversations";
+const ME_IN_CHAT = { puuid: "mock-puuid", summonerId: 1002, pid: "1002@mock.pvp.net", id: "1002@mock.pvp.net", gameName: "You", name: "You" };
+interface MockConversation {
+  id: string;
+  type: string;
+  messages: Record<string, unknown>[];
+}
+// A private conversation with a friend: the phone must never show it.
+const conversations = new Map<string, MockConversation>([
+  ["2001@mock.pvp.net", { id: "2001@mock.pvp.net", type: "chat", messages: [{ id: "dm-1", type: "chat", body: "private: not for the lobby", fromPuuid: FRIENDS[0]!.puuid, timestamp: new Date().toISOString() }] }],
+]);
+let lobbyChat: string | null = null;
+let champSelectChat: string | null = null;
+let nextChat = 1;
+let nextMessage = 1;
+
+/** Opens a group chat; returns its multiUserChatId (the conversation id is that plus a domain, like on a live client). */
+function openChat(kind: "lobby" | "champSelect"): string {
+  const muc = `${kind === "lobby" ? "lobby" : "champ-select"}-${nextChat++}`;
+  const id = `${muc}@${kind === "lobby" ? "sec" : "champ-select"}.mock.pvp.net`;
+  conversations.set(id, { id, type: kind === "lobby" ? "customGame" : "championSelect", messages: [] });
+  emit(`${CHAT}/${id}`, "Create", { id });
+  return muc;
+}
+
+function closeChat(muc: string | null): void {
+  const c = muc ? conversationOf(muc) : undefined;
+  if (!c) return;
+  conversations.delete(c.id);
+  emit(`${CHAT}/${c.id}`, "Delete", null);
+}
+
+const conversationOf = (muc: string) => [...conversations.values()].find((c) => c.id.startsWith(`${muc}@`));
+
+type Sender = { puuid: string; summonerId: number; pid?: string };
+const friendSender = (summonerId: number): Sender => {
+  const f = FRIENDS.find((x) => x.summonerId === summonerId)!;
+  return { puuid: f.puuid, summonerId, pid: f.pid };
+};
+const allySender = (cell: number): Sender => ({ puuid: `puuid-${cell}`, summonerId: 1000 + cell });
+
+function postChat(muc: string | null, from: Sender, body: string, type = "groupchat"): void {
+  const c = muc ? conversationOf(muc) : undefined;
+  if (!c) return;
+  const msg = {
+    id: `m${nextMessage++}`,
+    type,
+    body,
+    timestamp: new Date().toISOString(),
+    isHistorical: false,
+    fromPuuid: from.puuid,
+    fromSummonerId: from.summonerId,
+    fromPid: from.pid ?? `${from.summonerId}@mock.pvp.net`,
+    fromId: from.pid ?? `${from.summonerId}@mock.pvp.net`,
+    fromObfuscatedPuuid: "",
+    fromObfuscatedSummonerId: 0,
+  };
+  c.messages.push(msg);
+  emit(`${CHAT}/${c.id}/messages/${msg.id}`, "Create", msg);
+}
+
+/** Key w: a teammate writes in the current chat (in a solo lobby, DuoPartner joins first). */
+function teammateWrites(): void {
+  if (state[URIS.phase] === "ChampSelect" && session) {
+    postChat(champSelectChat, allySender(0), "I'll go top, can someone ward river at 3?");
+    say("Teemo Enjoyer wrote in the champ select chat");
+    return;
+  }
+  if (!lobbyChat) return say("no chat open (press l or c first)");
+  if (!lobbyMembers.some((m) => m.summonerId === 2001)) {
+    lobbyMembers.push({ summonerId: 2001, puuid: FRIENDS[0]!.puuid });
+    publishLobby(((state[URIS.lobby] as any)?.gameConfig?.queueId as number) ?? 420, true);
+    postChat(lobbyChat, friendSender(2001), "joined_room", "system");
+  }
+  postChat(lobbyChat, friendSender(2001), "ready? <b>not bold</b>");
+  say("DuoPartner wrote in the lobby chat");
+}
+
+/** Someone answers what I wrote, a moment later. */
+function replyTo(muc: string | null): void {
+  if (!muc) return;
+  if (muc === champSelectChat) later(1200, () => postChat(muc, allySender(1), "ok"));
+  else {
+    const friend = lobbyMembers.find((m) => m.summonerId !== 1002);
+    if (friend) later(1200, () => postChat(muc, friendSender(friend.summonerId), "👍"));
+  }
 }
 
 function later(ms: number, fn: () => void): void {
@@ -203,31 +297,51 @@ function toNone(): void {
   clearTimers();
   session = null;
   sentInvites = [];
+  closeChat(lobbyChat);
+  closeChat(champSelectChat);
+  lobbyChat = champSelectChat = null;
   for (const uri of Object.values(URIS)) set(uri, null);
   set(URIS.phase, "None");
 }
 
-let lobbyMembers: { summonerId: number }[] = [];
+// Lobby members carry no name (like LolLobbyLobbyParticipantDto on a live client); chat names come from the participants.
+let lobbyMembers: { summonerId: number; puuid: string }[] = [];
 function publishLobby(queueId: number, leader: boolean): void {
   set(URIS.lobby, {
     canStartActivity: true,
     localMember: { isLeader: leader, allowedInviteOthers: leader, puuid: "mock-puuid", summonerId: 1002 },
     gameConfig: { queueId },
     members: structuredClone(lobbyMembers),
+    multiUserChatId: lobbyChat,
+    multiUserChatPassword: "secret-chat-pw",
   });
 }
 
-function toLobby(queueId = 420, leader = true, others: number[] = []): void {
+/** Enters a lobby. Coming back from the queue keeps the same lobby (and chat); `fresh` starts a new one. */
+function toLobby(queueId = 420, leader = true, others: number[] = [], fresh = true): void {
   clearTimers();
   session = null;
   sentInvites = [];
-  lobbyMembers = [{ summonerId: 1002 }, ...others.map((summonerId) => ({ summonerId }))];
+  closeChat(champSelectChat);
+  champSelectChat = null;
+  if (fresh || !lobbyChat) {
+    closeChat(lobbyChat);
+    lobbyChat = openChat("lobby");
+  }
+  if (fresh || !lobbyMembers.length) {
+    lobbyMembers = [{ summonerId: 1002, puuid: "mock-puuid" }, ...others.map((summonerId) => ({ summonerId, puuid: friendSender(summonerId).puuid }))];
+  }
   set(URIS.session, null);
   set(URIS.readyCheck, null);
   set(URIS.search, null);
   publishLobby(queueId, leader);
   set(URIS.phase, "Lobby");
   say(`phase Lobby (queue ${queueId}${leader ? "" : ", not leader"})`);
+}
+
+/** Back to the same lobby (queue cancelled, ready check declined). */
+function backToLobby(): void {
+  toLobby(((state[URIS.lobby] as any)?.gameConfig?.queueId as number) ?? 420, true, [], false);
 }
 
 function toQueue(): void {
@@ -265,6 +379,8 @@ function toReadyCheck(): void {
 
 function toChampSelect(): void {
   clearTimers();
+  closeChat(champSelectChat);
+  champSelectChat = openChat("champSelect");
   set(URIS.readyCheck, null);
   set(URIS.search, null);
   let id = 1;
@@ -296,7 +412,7 @@ function toChampSelect(): void {
     assignedPosition: positions[cell % 5],
     gameName: cell < 5 ? ["Teemo Enjoyer", "JungleDiff", "", "AdcMain", "WardBot"][cell] : "",
     tagLine: "EUW",
-    puuid: `puuid-${cell}`,
+    puuid: cell === LOCAL_CELL ? "mock-puuid" : `puuid-${cell}`,
     summonerId: 1000 + cell,
     playerType: "PLAYER",
     team: cell < 5 ? 1 : 2,
@@ -311,7 +427,7 @@ function toChampSelect(): void {
     theirTeam: [5, 6, 7, 8, 9].map(member),
     bans: { myTeamBans: [], theirTeamBans: [], numBans: 10 },
     timer: { phase: "PLANNING", adjustedTimeLeftInPhase: 10000, totalTimeInPhase: 10000, isInfinite: false, internalNowInEpochMs: Date.now() },
-    chatDetails: { multiUserChatId: "mock", multiUserChatPassword: "secret-chat-pw" },
+    chatDetails: { multiUserChatId: champSelectChat, multiUserChatPassword: "secret-chat-pw" },
     isSpectating: false,
     hasSimultaneousBans: true,
     hasSimultaneousPicks: false,
@@ -541,6 +657,9 @@ function finishCurrentTurn(): void {
 function toGame(): void {
   clearTimers();
   session = null;
+  closeChat(champSelectChat);
+  closeChat(lobbyChat);
+  champSelectChat = lobbyChat = null;
   set(URIS.session, null);
   set(URIS.pickable, null);
   set(URIS.bannable, null);
@@ -676,6 +795,25 @@ async function handle(req: any, res: any): Promise<void> {
     return f ? json(200, { summonerId: f.summonerId, gameName: f.gameName, tagLine: "EUW", puuid: f.puuid }) : lcuError(res, 404, "No summoner");
   }
   if (m === "GET" && p === "/lol-chat/v1/friends") return json(200, FRIENDS);
+  if (m === "GET" && p === "/lol-chat/v1/me") return json(200, { ...ME_IN_CHAT, availability: "chat" });
+  if (m === "GET" && p === CHAT) return json(200, [...conversations.values()].map(({ id, type }) => ({ id, type, unreadMessageCount: 0 })));
+  const chatPath = /^\/lol-chat\/v1\/conversations\/([^/]+)\/(messages|participants)$/.exec(p);
+  if (chatPath) {
+    const c = conversations.get(decodeURIComponent(chatPath[1]!));
+    if (!c) return lcuError(res, 404, "No such conversation");
+    if (chatPath[2] === "participants" && m === "GET") {
+      const inLobby = c.id.startsWith(`${lobbyChat}@`) ? lobbyMembers.filter((x) => x.summonerId !== 1002).map((x) => FRIENDS.find((f) => f.summonerId === x.summonerId)!) : [];
+      return json(200, [ME_IN_CHAT, ...inLobby.map((f) => ({ puuid: f.puuid, summonerId: f.summonerId, pid: f.pid, id: f.pid, gameName: f.gameName, name: f.gameName }))]);
+    }
+    if (chatPath[2] === "messages" && m === "GET") return json(200, c.messages);
+    if (chatPath[2] === "messages" && m === "POST") {
+      if (typeof body?.body !== "string" || !body.body || body.type !== "groupchat") return lcuError(res, 400, "INVALID_MESSAGE");
+      const muc = c.id.split("@")[0]!;
+      postChat(muc, ME_IN_CHAT, body.body);
+      replyTo(muc);
+      return json(200, c.messages[c.messages.length - 1]);
+    }
+  }
   if (m === "GET" && p === "/lol-lobby/v2/lobby/invitations") return state[URIS.phase] === "Lobby" ? json(200, sentInvites) : lcuError(res, 404, "No lobby");
   if (m === "POST" && p === "/lol-lobby/v2/lobby/invitations") {
     if (state[URIS.phase] !== "Lobby") return lcuError(res, 400, "NOT_IN_LOBBY");
@@ -690,7 +828,8 @@ async function handle(req: any, res: any): Promise<void> {
         const sent = sentInvites.find((x) => x.toSummonerId === id && x.state === "Pending");
         if (!sent || state[URIS.phase] !== "Lobby") return;
         sent.state = "Accepted";
-        lobbyMembers.push({ summonerId: id });
+        lobbyMembers.push({ summonerId: id, puuid: friendSender(id).puuid });
+        postChat(lobbyChat, friendSender(id), "joined_room", "system");
         publishLobby(((state[URIS.lobby] as any)?.gameConfig?.queueId as number) ?? 420, true);
         say(`${name} joined your lobby`);
       });
@@ -703,7 +842,7 @@ async function handle(req: any, res: any): Promise<void> {
     return void res.writeHead(204).end();
   }
   if (m === "DELETE" && p === "/lol-lobby/v2/lobby/matchmaking/search") {
-    toLobby();
+    backToLobby();
     return void res.writeHead(204).end();
   }
   if (m === "POST" && (p === "/lol-matchmaking/v1/ready-check/accept" || p === "/lol-matchmaking/v1/ready-check/decline")) {
@@ -713,7 +852,7 @@ async function handle(req: any, res: any): Promise<void> {
     set(URIS.readyCheck, { ...rc, playerResponse: accepted ? "Accepted" : "Declined" });
     clearTimers();
     if (accepted) later(1500, toChampSelect);
-    else later(500, toLobby);
+    else later(500, backToLobby);
     return void res.writeHead(204).end();
   }
   const swap = /^\/lol-champ-select\/v1\/session\/(position-swaps|pick-order-swaps|champion-swaps)\/(\d+)\/(accept|decline|request|cancel)$/.exec(p);
@@ -824,7 +963,7 @@ void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType
     console.log(`\nMock LCU on https://127.0.0.1:${port}${noComplete ? "  (POST /complete disabled)" : ""}`);
     console.log(`Run the connector with:  npm run dev -- --league-dir "${dir}"`);
     console.log("Keys: l=lobby q=queue r=ready check c=champ select a=ARAM m=choose one of two n=finish current turn g=in game 0=none x=quit");
-    console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions   i = a friend invites you\n");
+    console.log("      s/o/t = a teammate asks you to swap roles / pick order / champions   i = a friend invites you   w = a teammate writes in chat\n");
   });
 });
 
@@ -848,6 +987,7 @@ if (process.stdin.isTTY) {
     if (k === "x") cleanup();
     else if (k === "l") toLobby();
     else if (k === "i") incomingInvite();
+    else if (k === "w") teammateWrites();
     else if (k === "q") toQueue();
     else if (k === "r") toReadyCheck();
     else if (k === "c") toChampSelect();
@@ -871,6 +1011,7 @@ if (process.stdin.isTTY) {
       o: () => incomingSwap("pickOrderSwaps", 4),
       t: () => incomingSwap("trades", 0),
       i: incomingInvite,
+      w: teammateWrites,
       a: toAram,
       m: toChooseOne,
     };

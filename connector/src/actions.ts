@@ -8,6 +8,7 @@
  * Adding a feature = add an entry here.
  */
 
+import { cleanText, conversationPath, currentConversation, MAX_CHAT_TEXT } from "./chat";
 import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
@@ -281,6 +282,18 @@ function swapAction(verb: SwapVerb): ActionDef {
   };
 }
 
+// ---------- chat ----------
+
+/** The message the phone wants to send, as one line of plain text. */
+function chatText(input: Input): string {
+  const v = input.text;
+  if (typeof v !== "string") throw new ActionError(400, "text must be a string");
+  const text = cleanText(v, MAX_CHAT_TEXT + 1);
+  if (!text) throw new ActionError(400, "Write something first");
+  if ([...text].length > MAX_CHAT_TEXT) throw new ActionError(400, `Messages can be up to ${MAX_CHAT_TEXT} characters`);
+  return text;
+}
+
 // ---------- handles (invitations, friends) ----------
 
 const HANDLE_GONE: Record<HandleKind, string> = {
@@ -450,6 +463,18 @@ const ACTIONS = {
       if (typeof raw.puuid === "string" && raw.puuid) invite.toPuuid = raw.puuid;
       const status = await call(http, "POST", "/lol-lobby/v2/lobby/invitations", [invite]);
       if (status === 404) throw new ActionError(502, "This League client can't send invitations from here. Use your PC.");
+    },
+  },
+  "chat/send": {
+    keys: ["text"],
+    validate: (input) => void chatText(input),
+    async run(input, http) {
+      const text = chatText(input);
+      // The room is looked up again here: the phone never names a conversation.
+      const conversation = await currentConversation(http);
+      if (!conversation) throw new ActionError(409, "There's no chat to send to right now");
+      const status = await call(http, "POST", conversationPath(conversation.id, "messages"), { body: text, type: "groupchat" });
+      if (status === 404) throw new ActionError(409, "That chat isn't open anymore");
     },
   },
   "champ-select/swap/accept": swapAction("accept"),

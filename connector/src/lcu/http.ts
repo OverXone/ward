@@ -20,8 +20,10 @@ export interface LcuResponse {
 
 export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
-// Paths are built by our own code from constants + validated integers; this is defence in depth.
-const SAFE_PATH = /^\/[A-Za-z0-9\-_/.]*$/;
+// Paths are built by our own code from constants, validated integers and percent-encoded ids
+// (chat conversation ids contain "@"); this is defence in depth. Encoded ".", "/" and "\" are refused.
+const SAFE_PATH = /^\/(?:[A-Za-z0-9\-_/.~]|%[0-9A-Fa-f]{2})*$/;
+const ENCODED_SEPARATOR = /%(?:2e|2f|5c)/i;
 
 export class LcuHttp {
   private readonly agent: https.Agent;
@@ -37,7 +39,7 @@ export class LcuHttp {
   }
 
   request(method: HttpMethod, path: string, jsonBody?: unknown, timeoutMs = 5000): Promise<LcuResponse> {
-    if (!SAFE_PATH.test(path) || path.includes("..")) {
+    if (!SAFE_PATH.test(path) || path.includes("..") || ENCODED_SEPARATOR.test(path)) {
       return Promise.reject(new Error("refusing unsafe LCU path"));
     }
     const payload = jsonBody === undefined ? undefined : Buffer.from(JSON.stringify(jsonBody));

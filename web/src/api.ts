@@ -120,7 +120,8 @@ export type ActionName =
   | "champ-select/swap/cancel"
   | "invitations/accept"
   | "invitations/decline"
-  | "lobby/invite";
+  | "lobby/invite"
+  | "chat/send";
 
 export async function action(name: ActionName, body?: Record<string, unknown>): Promise<void> {
   const res = await authed(`/api/${name}`, {

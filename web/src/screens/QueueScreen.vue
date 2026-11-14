@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { QueueView } from "@shared/phone-api";
 import { computed, ref } from "vue";
+import ChatButton from "../components/ChatButton.vue";
 import { queueSeconds, run } from "../store";
 
 const props = defineProps<{ queue: QueueView | null; queueName: string | null }>();
@@ -30,6 +31,7 @@ async function cancel() {
       <p class="penalty" v-for="err in queue?.errors ?? []" :key="err">{{ err }}</p>
       <p class="sub small">Keep this open. Your phone will buzz when a match is found.</p>
     </div>
+    <ChatButton />
     <div class="actions">
       <button class="btn btn-ghost" :disabled="busy" @click="cancel">Cancel queue</button>
     </div>

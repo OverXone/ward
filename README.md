@@ -8,6 +8,7 @@ Control your League of Legends client from your phone over your home Wi-Fi. Step
 - accept, decline or ask for role swaps, pick-order swaps and champion trades
 - choose your summoner spells, skin and chroma
 - join or decline lobby invitations, and invite online friends to your lobby
+- read and write in the lobby chat and your team's champ select chat
 
 There's no cloud and no accounts. Everything stays on your local network.
 
@@ -35,6 +36,7 @@ Good to know:
 - **Spells and skin:** tap a spell under the teams to change it (choosing the other slot's spell swaps them). After you lock in, a **Skin** button lists the skins and chromas you own.
 - **Runes** aren't on the phone; set them in the PC client or with a tool like Mobalytics. (The last version with a rune page picker is tagged `with-runes` in git.)
 - **Invitations:** when someone invites you, a card with **Join** and **Decline** appears on every screen. In your lobby, **Invite friends** lists friends who are online in League.
+- **Chat:** in the lobby and while queued, **Lobby chat** shows the latest message; in champ select, the chat button sits next to the timer. A red number counts unread messages and the phone buzzes briefly when a teammate writes. Messages are up to 200 characters. In champ select, teammates whose names League hides show as "Ally 2" and so on, the same as in the team list.
 - **Don't show the window on stream or screen share.** Until it's used, the QR code signs in whoever scans it on your Wi-Fi.
 
 ### Phone can't open the page?
@@ -122,6 +124,7 @@ Keys in the mock window:
 - `0` client idle
 - `s` / `o` / `t` a teammate asks you for a role swap / pick-order swap / champion trade
 - `i` a friend invites you to their Ranked Flex lobby
+- `w` a teammate writes in the lobby or champ select chat (in a solo lobby, a friend joins first); whatever you send gets a reply
 - `f` freeze (stop answering, like a hung client); `f` again to unfreeze
 
 `npm run mock-lcu -- --no-complete` simulates a client without `POST …/complete`, to test the lock-in fallback.

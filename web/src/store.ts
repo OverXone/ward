@@ -1,6 +1,9 @@
-import type { ChampionSummary, PhoneState } from "@shared/phone-api";
+import type { ChampionSummary, ChatView, PhoneState } from "@shared/phone-api";
 import { reactive } from "vue";
+import { chatAlert } from "./alerts";
 import * as api from "./api";
+
+const CHAT_SEEN_KEY = "lolc.chatSeen";
 
 export const app = reactive({
   paired: false,
@@ -17,7 +20,42 @@ export const app = reactive({
   busy: false,
   /** Monotonic tick so countdowns re-render. */
   now: performance.now(),
+  /** The newest chat message read on this phone, per room. */
+  chatSeen: loadChatSeen(),
+  /** The chat sheet is open (new messages are read as they arrive). */
+  chatOpen: false,
 });
+
+function loadChatSeen(): { room: string; id: number } {
+  try {
+    const raw = JSON.parse(sessionStorage.getItem(CHAT_SEEN_KEY) ?? "null") as { room?: unknown; id?: unknown } | null;
+    if (typeof raw?.room === "string" && typeof raw.id === "number") return { room: raw.room, id: raw.id };
+  } catch {
+    // storage blocked or garbage: everything counts as unread
+  }
+  return { room: "", id: 0 };
+}
+
+/** Messages from others in the current chat that this phone hasn't shown yet. */
+export function unreadChat(): number {
+  const chat = app.state?.chat;
+  if (!chat) return 0;
+  const seen = app.chatSeen.room === chat.room ? app.chatSeen.id : 0;
+  return chat.messages.filter((m) => m.kind === "message" && !m.isMe && m.id > seen).length;
+}
+
+export function markChatSeen(): void {
+  const chat = app.state?.chat;
+  if (!chat) return;
+  const id = chat.messages.at(-1)?.id ?? 0;
+  if (app.chatSeen.room === chat.room && app.chatSeen.id >= id) return;
+  app.chatSeen = { room: chat.room, id };
+  try {
+    sessionStorage.setItem(CHAT_SEEN_KEY, JSON.stringify(app.chatSeen));
+  } catch {
+    // storage blocked: unread counts reset when the page reloads
+  }
+}
 
 let socket: ReturnType<typeof api.connectSocket> | null = null;
 let toastTimer: number | undefined;
@@ -53,7 +91,15 @@ function onState(state: PhoneState): void {
   if (state.lcu === "connected" && (lastLcuStatus !== "connected" || app.champions.size === 0)) void loadChampions();
   if (state.lcu !== "connected") app.champions = new Map();
   lastLcuStatus = state.lcu;
+  noteNewChat(app.state?.chat ?? null, state.chat);
   app.state = state;
+}
+
+/** A short buzz when a teammate writes and the chat isn't open (not for what was there before). */
+function noteNewChat(before: ChatView | null, now: ChatView | null): void {
+  if (!before || !now || before.room !== now.room || app.chatOpen) return;
+  const newest = before.messages.at(-1)?.id ?? 0;
+  if (now.messages.some((m) => m.id > newest && m.kind === "message" && !m.isMe)) chatAlert();
 }
 
 /** The phone's Unpair button: the PC forgets this phone. */

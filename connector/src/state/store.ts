@@ -10,6 +10,7 @@ import type { LcuHttp } from "../lcu/http";
 import { log } from "../log";
 import type { LcuEvent } from "../lcu/socket";
 import { Handles } from "../handles";
+import { Chat, CHAT_CONVERSATIONS, chatRoomFor, type ChatMember, type ChatRoom } from "../chat";
 import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView } from "../shared/phone-api";
 import { deriveChampSelect, describeMode, type LcuSession } from "./champ-select";
 
@@ -35,6 +36,7 @@ interface RawLobby {
   localMember?: { isLeader?: boolean; allowedInviteOthers?: boolean };
   gameConfig?: { queueId?: number };
   members?: unknown[];
+  multiUserChatId?: unknown;
 }
 
 interface RawSearch {
@@ -200,6 +202,8 @@ export class Store extends EventEmitter {
   private invitationPoll: NodeJS.Timeout | null = null;
   /** Opaque names the phone uses for invitations and friends (see handles.ts). */
   readonly handles = new Handles();
+  /** The lobby's or champ select's chat. */
+  readonly chat = new Chat(() => this.recompute());
   state: PhoneState = this.derive();
 
   setLcuStatus(status: LcuStatus): void {
@@ -215,6 +219,7 @@ export class Store extends EventEmitter {
     this.inviterNames.clear();
     this.inviterLookups.clear();
     this.handles.clear();
+    this.chat.attach(http);
     void this.refreshAll();
     // The client's API list names no event for received invitations, so also re-read them (GET only).
     if (this.invitationPoll) clearInterval(this.invitationPoll);
@@ -225,6 +230,7 @@ export class Store extends EventEmitter {
   detach(): void {
     this.http = null;
     this.raw = emptyRaw();
+    this.chat.detach();
     if (this.invitationPoll) clearInterval(this.invitationPoll);
     this.invitationPoll = null;
     if (this.snapshotRetry) clearTimeout(this.snapshotRetry);
@@ -245,6 +251,7 @@ export class Store extends EventEmitter {
   }
 
   handleEvent(e: LcuEvent): void {
+    if (e.uri.startsWith(CHAT_CONVERSATIONS)) return this.chat.handleEvent(e);
     const key = KEY_BY_URI.get(e.uri);
     if (!key) return;
     const value = e.eventType === "Delete" ? null : e.data;
@@ -468,11 +475,47 @@ export class Store extends EventEmitter {
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
       champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable, Date.now(), r.subset) : null,
       invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
+      chat: null,
     };
+  }
+
+  /** The chat room for the current phase, with who's in it (names as the phone shows them elsewhere). */
+  private chatRoom(state: PhoneState): ChatRoom | null {
+    const r = this.raw;
+    if (state.lcu !== "connected") return null;
+    const room = chatRoomFor(r.phase, r.lobby, r.session);
+    if (!room) return null;
+    let members: ChatMember[] = [];
+    if (room.kind === "champSelect" && r.session) {
+      const session = r.session;
+      const shown = new Map((state.champSelect?.myTeam ?? []).map((p) => [p.cellId, p]));
+      members = session.myTeam.map((m) => {
+        const extra = m as unknown as Record<string, unknown>;
+        const p = shown.get(m.cellId);
+        return {
+          ids: [extra.puuid, m.summonerId, extra.obfuscatedPuuid, extra.obfuscatedSummonerId],
+          name: p?.name ?? "",
+          championId: p?.championId ?? 0,
+          isMe: m.cellId === session.localPlayerCellId,
+        };
+      });
+    } else if (room.kind === "lobby" && r.lobby) {
+      const local = r.lobby.localMember as Record<string, unknown> | undefined;
+      const mine = new Set([local?.puuid, local?.summonerId].filter((v) => v !== undefined && v !== null && v !== ""));
+      members = (Array.isArray(r.lobby.members) ? r.lobby.members : []).flatMap((raw) => {
+        const m = raw as Record<string, unknown> | null;
+        if (!m || typeof m !== "object") return [];
+        const name = [m.gameName, m.summonerName].find((n): n is string => typeof n === "string" && n.trim() !== "");
+        return [{ ids: [m.puuid, m.summonerId], name: name?.trim() ?? "", championId: 0, isMe: mine.has(m.puuid) || mine.has(m.summonerId) }];
+      });
+    }
+    return { ...room, members };
   }
 
   private recompute(): void {
     const next = this.derive();
+    this.chat.setRoom(this.chatRoom(next));
+    next.chat = this.chat.view();
     const json = JSON.stringify(next);
     if (json === this.lastJson) return;
     this.lastJson = json;
