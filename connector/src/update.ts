@@ -209,19 +209,26 @@ function cmdQuote(arg: string): string | null {
 }
 
 /**
- * Starts `exe` in a new console window with the same arguments. Goes through `start` so the new
- * Ward gets a window of its own (the current one closes when this process exits).
+ * Starts `exe` in a new console window. Goes through `start` so it gets a window of its own
+ * (a window this process has closes when this process exits).
  * Returns false if the arguments can't be passed on safely; the caller asks the user to restart.
  */
-export function relaunch(exe: string, args: readonly string[], version: string): boolean {
+export function openInNewWindow(exe: string, args: readonly string[], env: Record<string, string> = {}): boolean {
   const quoted = [exe, ...args].map(cmdQuote);
   if (quoted.some((q) => q === null)) return false;
   const child = spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"start "Ward" ${quoted.join(" ")}"`], {
     detached: true,
     stdio: "ignore",
     windowsVerbatimArguments: true,
-    env: { ...process.env, [JUST_UPDATED_ENV]: version },
+    env: { ...process.env, ...env },
   });
   child.unref();
   return true;
+}
+
+/** Starts `exe` with no window at all (the background Ward). */
+export function startInBackground(exe: string, args: readonly string[], env: Record<string, string> = {}): void {
+  const childEnv: NodeJS.ProcessEnv = { ...process.env, ...env };
+  if (!(JUST_UPDATED_ENV in env)) delete childEnv[JUST_UPDATED_ENV];
+  spawn(exe, args, { detached: true, stdio: "ignore", windowsHide: true, env: childEnv }).unref();
 }

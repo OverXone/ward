@@ -43,10 +43,29 @@ function fmt(args: unknown[]): string {
   );
 }
 
+export type LogKind = "info" | "warn" | "error" | "plain";
+
+/**
+ * Where output goes instead of the console. Ward in the background (tray) has no console:
+ * it sends every line to the open Ward windows.
+ */
+let sink: ((text: string, kind: LogKind) => void) | null = null;
+
+export function setLogSink(fn: ((text: string, kind: LogKind) => void) | null): void {
+  sink = fn;
+}
+
+function emit(text: string, kind: LogKind): void {
+  if (sink) sink(text, kind);
+  else if (kind === "warn") console.warn(text);
+  else if (kind === "error") console.error(text);
+  else console.log(text);
+}
+
 export const log = {
-  info: (...args: unknown[]) => console.log(`[${stamp()}] ${fmt(args)}`),
-  warn: (...args: unknown[]) => console.warn(`[${stamp()}] WARN ${fmt(args)}`),
-  error: (...args: unknown[]) => console.error(`[${stamp()}] ERROR ${fmt(args)}`),
+  info: (...args: unknown[]) => emit(`[${stamp()}] ${fmt(args)}`, "info"),
+  warn: (...args: unknown[]) => emit(`[${stamp()}] WARN ${fmt(args)}`, "warn"),
+  error: (...args: unknown[]) => emit(`[${stamp()}] ERROR ${fmt(args)}`, "error"),
   /** Print without timestamp (banners, QR codes). Still redacted unless `raw`. */
-  plain: (text: string, raw = false) => console.log(raw ? text : redact(text)),
+  plain: (text: string, raw = false) => emit(raw ? text : redact(text), "plain"),
 };
