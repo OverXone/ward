@@ -306,6 +306,7 @@ export function deriveChampSelect(
   bannable: number[] | null,
   now = Date.now(),
   subset: number[] | null = null,
+  playable: ReadonlySet<number> | null = null,
 ): ChampSelectView {
   const active = inProgressActions(session);
   const my = findMyActiveAction(session);
@@ -329,6 +330,7 @@ export function deriveChampSelect(
     mySkinId: pos(me?.selectedSkinId),
     lockedChampionIds: lockedChampions(session),
     bench: session.isSpectating ? null : benchChampions(session),
+    benchLocked: session.isSpectating || !playable ? [] : (benchChampions(session) ?? []).filter((id) => !playable.has(id)),
     rerollsLeft: rerollsLeft(session),
     choices: session.allowSubsetChampionPicks ? positiveIds(subset) : [],
   };

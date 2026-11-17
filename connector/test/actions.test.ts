@@ -323,6 +323,17 @@ describe("ARAM bench and rerolls", () => {
     expect(lcu.writes()).toHaveLength(1);
   });
 
+  it("refuses a bench champion I don't own (League ignored the swap without an error)", async () => {
+    const lcu = aram(aramSession(), { "POST /lol-champ-select/v1/session/bench/swap/22": ok(), "POST /lol-champ-select/v1/session/bench/swap/51": ok() });
+    const ctx = { http: lcu.http, playable: () => new Set([22]) };
+    await expectError(runAction("champ-select/bench", { championId: 51 }, ctx), 409, /don't own/);
+    expect(lcu.writes()).toHaveLength(0);
+    await runAction("champ-select/bench", { championId: 22 }, ctx);
+    // Unknown ownership: let League decide.
+    await runAction("champ-select/bench", { championId: 51 }, { http: lcu.http, playable: () => null });
+    expect(lcu.writes().map((w) => w.path)).toEqual(["/lol-champ-select/v1/session/bench/swap/22", "/lol-champ-select/v1/session/bench/swap/51"]);
+  });
+
   it("refuses bench swaps outside bench modes", async () => {
     const lcu = aram(draftSession());
     await expectError(run("champ-select/bench", { championId: 22 }, lcu.http), 409, /no bench/);

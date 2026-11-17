@@ -132,6 +132,8 @@ export interface ChampSelectView {
   lockedChampionIds: number[];
   /** ARAM-style bench: champions I can swap mine for (null = this mode has no bench). */
   bench: number[] | null;
+  /** Bench champions I can't swap for because I don't own them (League shows a lock). Empty when unknown. */
+  benchLocked: number[];
   /** Rerolls I have left (null = this mode doesn't allow rerolling). */
   rerollsLeft: number | null;
   /** Modes that offer each player a few champions: the ones League offers me (empty otherwise). */

@@ -216,6 +216,7 @@ export function createRequestHandler(deps: ServerDeps) {
         await runAction(name, body, {
           http: deps.getLcu(),
           lists: () => deps.store.championLists(),
+          playable: () => deps.store.playableChampions(),
           knownChampions: () => deps.champions.list(),
           loadout: deps.loadout,
           handles: deps.store.handles,

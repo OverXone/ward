@@ -197,7 +197,7 @@ const seconds = computed(() => champSelectSecondsLeft());
 
     <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />
 
-    <BenchPanel v-if="hasBench" :bench="cs.bench" :rerolls-left="cs.rerollsLeft" />
+    <BenchPanel v-if="hasBench" :bench="cs.bench" :locked="cs.benchLocked ?? []" :rerolls-left="cs.rerollsLeft" />
 
     <section v-if="choices.length && !cs.hasLockedPick" class="choices">
       <button

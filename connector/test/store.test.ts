@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { LcuHttp } from "../src/lcu/http";
 import { Store, URI } from "../src/state/store";
-import { advanceTo, draftSession } from "./fixtures/sessions";
+import { GRID_PATH, OWNED_PATH } from "../src/ownership";
+import { advanceTo, aramSession, draftSession } from "./fixtures/sessions";
 
 const BANNABLE = [51, 99, 103, 157];
 const PICKABLE = [51, 103];
@@ -137,5 +138,59 @@ describe("store champion lists", () => {
     store.handleEvent({ uri: URI.bannable, eventType: "Delete", data: [] });
     store.handleEvent({ uri: URI.session, eventType: "Create", data: advanceTo(draftSession(), 0) });
     expect(store.championLists().bannable).toEqual([]);
+  });
+});
+
+describe("store bench ownership", () => {
+  const grid = [
+    { id: 22, owned: true },
+    { id: 51, owned: false, freeToPlay: false },
+    { id: 202, owned: false, freeToPlay: true },
+  ];
+
+  it("locks bench champions the grid says I can't play, and forgets it when champ select ends", async () => {
+    const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [GRID_PATH]: grid });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    store.handleEvent(event(URI.session, aramSession()));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(store.state.champSelect?.benchLocked).toEqual([51]);
+    expect([...(store.playableChampions() ?? [])].sort()).toEqual([202, 22]);
+
+    store.handleEvent({ uri: URI.session, eventType: "Delete", data: null });
+    expect(store.playableChampions()).toBeNull();
+  });
+
+  it("falls back to the owned-champions list, and locks nothing when neither answers", async () => {
+    const owned = [{ id: 22, ownership: { owned: true } }, { id: 51, ownership: { owned: false, rental: { rented: false } } }];
+    const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [OWNED_PATH]: owned });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    store.handleEvent(event(URI.session, aramSession()));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(store.state.champSelect?.benchLocked).toEqual([51]);
+
+    const none = new Store();
+    none.setLcuStatus("connected");
+    none.attach(fakeHttp({ [URI.phase]: "ChampSelect" }).http);
+    await tick();
+    none.handleEvent(event(URI.session, aramSession()));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(none.state.champSelect?.benchLocked).toEqual([]);
+  });
+
+  it("doesn't ask about ownership in modes without a bench", async () => {
+    const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [GRID_PATH]: grid });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    store.handleEvent(event(URI.session, advanceTo(draftSession(), 0)));
+    await tick();
+    expect(lcu.gets).not.toContain(GRID_PATH);
   });
 });

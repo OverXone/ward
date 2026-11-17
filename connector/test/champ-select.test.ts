@@ -175,6 +175,12 @@ describe("ARAM and choose-from-a-few modes", () => {
     expect(deriveChampSelect(s, [], []).rerollsLeft).toBe(0);
   });
 
+  it("marks bench champions I can't play as locked, and none while ownership is unknown", () => {
+    expect(deriveChampSelect(aramSession(), [], [], 0, null, new Set([22, 202])).benchLocked).toEqual([51]);
+    expect(deriveChampSelect(aramSession(), [], []).benchLocked).toEqual([]);
+    expect(deriveChampSelect(draftSession(), [], [], 0, null, new Set([22])).benchLocked).toEqual([]);
+  });
+
   it("hides the bench and rerolls while spectating", () => {
     const s = aramSession();
     s.isSpectating = true;

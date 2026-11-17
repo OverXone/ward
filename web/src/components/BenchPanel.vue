@@ -1,15 +1,24 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { championName, run } from "../store";
+import { computed, ref } from "vue";
+import { championName, run, showToast } from "../store";
 import ChampIcon from "./ChampIcon.vue";
 
-/** ARAM-style bench and rerolls. bench null = this mode has no bench; rerollsLeft null = no rerolls. */
-const props = defineProps<{ bench: number[] | null; rerollsLeft: number | null }>();
+/**
+ * ARAM-style bench and rerolls. bench null = this mode has no bench; rerollsLeft null = no rerolls.
+ * locked = bench champions I don't own: shown with a lock like on the PC, and not swappable.
+ */
+const props = defineProps<{ bench: number[] | null; locked: number[]; rerollsLeft: number | null }>();
 
 const busy = ref<number | "reroll" | null>(null);
+const lockedSet = computed(() => new Set(props.locked));
+const anyFree = computed(() => (props.bench ?? []).some((id) => !lockedSet.value.has(id)));
 
 async function swap(id: number) {
   if (busy.value !== null) return;
+  if (lockedSet.value.has(id)) {
+    showToast(`You don't own ${championName(id)}, so you can't swap for it.`, "info");
+    return;
+  }
   busy.value = id;
   await run("champ-select/bench", { championId: id });
   busy.value = null;
@@ -35,21 +44,31 @@ async function reroll() {
     </div>
     <template v-if="bench">
       <div v-if="bench.length" class="row">
+        <!-- Locked slots stay tappable (aria-disabled, not disabled) so a tap can say why. -->
         <button
           v-for="id in bench"
           :key="id"
           class="slot"
-          :class="{ busy: busy === id }"
+          :class="{ busy: busy === id, locked: lockedSet.has(id) }"
           :disabled="busy !== null"
-          :aria-label="`Swap for ${championName(id)}`"
+          :aria-disabled="lockedSet.has(id) || undefined"
+          :aria-label="lockedSet.has(id) ? `${championName(id)}, not owned` : `Swap for ${championName(id)}`"
           @click="swap(id)"
         >
-          <ChampIcon :id="id" :size="56" />
+          <span class="icon">
+            <ChampIcon :id="id" :size="56" />
+            <svg v-if="lockedSet.has(id)" class="lock" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M7 10V7a5 5 0 0 1 10 0v3h1a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1h1Zm2 0h6V7a3 3 0 0 0-6 0v3Z" />
+            </svg>
+          </span>
           <span class="name">{{ championName(id) }}</span>
         </button>
       </div>
       <p v-else class="hint">No champions on the bench yet.</p>
-      <p v-if="bench.length" class="hint">Tap one to swap your champion for it.</p>
+      <p v-if="bench.length" class="hint">
+        <template v-if="anyFree">Tap one to swap your champion for it.</template>
+        <template v-else>You don't own any of these champions.</template>
+      </p>
     </template>
   </section>
 </template>
@@ -97,12 +116,33 @@ async function reroll() {
   font: inherit;
   cursor: pointer;
 }
-.slot:disabled {
+.slot:disabled,
+.slot.locked {
   cursor: default;
 }
 .slot.busy,
-.slot:active:not(:disabled) {
+.slot:active:not(:disabled):not(.locked) {
   opacity: 0.6;
+}
+.icon {
+  position: relative;
+  display: block;
+  line-height: 0;
+}
+.locked .icon :deep(img) {
+  filter: grayscale(1) brightness(0.55);
+}
+.lock {
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 22px;
+  height: 22px;
+  fill: #fff;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.7));
+}
+.locked .name {
+  color: var(--muted);
 }
 .name {
   width: 100%;

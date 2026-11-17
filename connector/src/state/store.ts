@@ -12,6 +12,7 @@ import type { LcuEvent } from "../lcu/socket";
 import { Handles } from "../handles";
 import { Chat, CHAT_CONVERSATIONS, chatRoomFor, type ChatMember, type ChatRoom } from "../chat";
 import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView, Role } from "../shared/phone-api";
+import { readPlayableChampions } from "../ownership";
 import { deriveChampSelect, describeMode, type LcuSession } from "./champ-select";
 
 export const URI = {
@@ -216,6 +217,9 @@ export class Store extends EventEmitter {
   private oddListsLogged = new Set<string>();
   private lastModeLine = "";
   private subsetFetchedAt = 0;
+  /** Champions I can play (see ownership.ts), read once per champ select that has a bench. */
+  private playable: ReadonlySet<number> | null = null;
+  private playableFetchedAt = 0;
   /** Riot ID game names of people who invited me, by summoner id. */
   private inviterNames = new Map<number, string>();
   private inviterLookups = new Set<number>();
@@ -235,6 +239,8 @@ export class Store extends EventEmitter {
     this.http = http;
     this.raw = emptyRaw();
     this.lastCsPhase = null;
+    this.playable = null;
+    this.playableFetchedAt = 0;
     this.queueNames.clear();
     this.inviterNames.clear();
     this.inviterLookups.clear();
@@ -263,6 +269,11 @@ export class Store extends EventEmitter {
     // Only while champ select is on, so a list left over from an earlier one is never used.
     if (!this.raw.session) return { pickable: [], bannable: [] };
     return { pickable: this.raw.pickable ?? [], bannable: this.raw.bannable ?? [] };
+  }
+
+  /** Champions I can play, or null when not known (no bench champ select, or the client won't say). */
+  playableChampions(): ReadonlySet<number> | null {
+    return this.raw.session ? this.playable : null;
   }
 
   /** Latest raw session (used by actions as a fallback; actions normally re-fetch). */
@@ -307,6 +318,20 @@ export class Store extends EventEmitter {
     });
   }
 
+  /** Ownership only matters for bench swaps, so it's read when a bench mode starts (and retried while unknown). */
+  private checkPlayable(): void {
+    if (!this.raw.session?.benchEnabled || this.playable || Date.now() - this.playableFetchedAt < 5000) return;
+    const http = this.http;
+    if (!http) return;
+    this.playableFetchedAt = Date.now();
+    void readPlayableChampions(http).then((found) => {
+      if (http !== this.http || !this.raw.session || !found) return;
+      this.playable = found.ids;
+      log.info(`Bench: you can play ${found.ids.size} champions (from the ${found.source})`);
+      this.recompute();
+    });
+  }
+
   /**
    * The pickable/bannable lists only get events when they change, so if one is ever missed or a
    * snapshot came back empty, the phone would grey out every champion for the whole champ select.
@@ -320,9 +345,12 @@ export class Store extends EventEmitter {
       this.lastCsPhase = null;
       this.oddListsLogged.clear();
       this.raw.subset = null;
+      this.playable = null;
+      this.playableFetchedAt = 0;
       return;
     }
     this.checkSubset();
+    this.checkPlayable();
     const csPhase = session.timer?.phase ?? null;
     const phaseChanged = csPhase !== this.lastCsPhase;
     this.lastCsPhase = csPhase;
@@ -493,7 +521,7 @@ export class Store extends EventEmitter {
       lobby: connected ? deriveLobby(r.lobby, Number.isInteger(queueId) ? (this.queueNames?.get(queueId as number) ?? null) : null) : null,
       queue: connected ? deriveQueue(search) : null,
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
-      champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable, Date.now(), r.subset) : null,
+      champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable, Date.now(), r.subset, this.playable) : null,
       invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
       chat: null,
     };

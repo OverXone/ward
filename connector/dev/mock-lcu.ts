@@ -60,6 +60,8 @@ const CHAMPIONS: { id: number; name: string; alias: string; color: [number, numb
   })),
 ];
 const ALL_IDS = CHAMPIONS.map((c) => c.id);
+/** Every third champion isn't owned, so ARAM's bench shows some with a lock. */
+const OWNED = new Set(ALL_IDS.filter((_, i) => i % 3 !== 2));
 
 function png(color: [number, number, number], size = 32): Buffer {
   const chunk = (type: string, data: Buffer) => {
@@ -768,6 +770,11 @@ async function handle(req: any, res: any): Promise<void> {
     if (!(p in state)) return lcuError(res, 404, `No ${p}`);
     return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(state[p]));
   }
+  if (m === "GET" && p === "/lol-champ-select/v1/all-grid-champions") {
+    if (!session) return lcuError(res, 404, "No champ select");
+    const grid = CHAMPIONS.map((c) => ({ id: c.id, name: c.name, owned: OWNED.has(c.id), rented: false, freeToPlay: false, freeToPlayForQueue: false, disabled: false }));
+    return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(grid));
+  }
   if (m === "GET" && p === "/lol-game-data/assets/v1/champion-summary.json") {
     const list = [{ id: -1, name: "None", alias: "None" }, ...CHAMPIONS.map(({ id, name, alias }) => ({ id, name, alias, squarePortraitPath: `/lol-game-data/assets/v1/champion-icons/${id}.png`, roles: [] }))];
     return void res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(list));
@@ -972,6 +979,8 @@ async function handle(req: any, res: any): Promise<void> {
   if (bench && m === "POST" && session?.benchEnabled) {
     const i = (session.benchChampions as { championId: number }[]).findIndex((b) => b.championId === Number(bench[1]));
     if (i < 0) return lcuError(res, 400, "CHAMPION_NOT_ON_BENCH");
+    // Like the live client (2026-11-17): swapping for a champion I don't own succeeds and does nothing.
+    if (!OWNED.has(Number(bench[1]))) return void res.writeHead(204).end();
     const me = memberByCell(LOCAL_CELL);
     const [taken] = session.benchChampions.splice(i, 1, { championId: me.championId, isPriority: false });
     me.championId = taken.championId;

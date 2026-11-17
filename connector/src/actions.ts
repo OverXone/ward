@@ -57,6 +57,8 @@ export interface ActionContext {
     availableSpells(): Promise<readonly { id: number }[] | null>;
     selectableSkinIds(): Promise<Set<number> | null>;
   };
+  /** Champions I can play (owned, rented, free), or null when not known. See ownership.ts. */
+  playable?: () => ReadonlySet<number> | null;
   /** Maps the phone's opaque handles back to invitations and friends. */
   handles?: Handles;
 }
@@ -438,13 +440,16 @@ const ACTIONS = {
   "champ-select/bench": {
     keys: ["championId"],
     validate: (input) => void championIdFrom(input),
-    async run(input, http) {
+    async run(input, http, ctx) {
       const championId = championIdFrom(input);
       const session = await getSession(http);
       if (session.isSpectating) throw new ActionError(409, "You're spectating this champion select");
       const bench = benchChampions(session);
       if (!bench) throw new ActionError(409, "This mode has no bench");
       if (!bench.includes(championId)) throw new ActionError(409, "That champion isn't on the bench anymore");
+      // A swap for a champion I don't own did nothing and showed no error (ARAM, 2026-11-17); the PC locks those.
+      const playable = ctx.playable?.();
+      if (playable && !playable.has(championId)) throw new ActionError(409, "You don't own that champion, so you can't swap for it");
       const status = await call(http, "POST", `/lol-champ-select/v1/session/bench/swap/${championId}`);
       if (status === 404) throw new ActionError(502, "This League client can't swap from the bench from here. Use your PC.");
     },
