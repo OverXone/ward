@@ -1,9 +1,10 @@
 /**
  * Which champions I can play: owned, rented, or free this week / for this queue.
  *
- * The ARAM bench lists every champion nobody took, owned or not, and League only lets me swap for
- * one I can play (the PC shows the others with a lock). The session doesn't say which those are,
- * so this asks the champion grid, which carries the same flags the PC uses for its lock.
+ * The ARAM bench lists every champion nobody took, and League only lets me swap for one I'm allowed
+ * to pick (the PC shows the others with a lock). The session doesn't say which those are. League's
+ * pickable list does, and it's the main source (see benchAllowed); ownership from the champion grid
+ * fills in when that list is missing, e.g. when Ward connects in the middle of champ select.
  *
  * Endpoints (from the client's own API list):
  * - /lol-champ-select/v1/all-grid-champions   per champion: owned, rented, freeToPlay, freeToPlayForQueue, ...
@@ -67,4 +68,15 @@ export async function readPlayableChampions(http: LcuHttp): Promise<{ ids: Set<n
   const owned = playableFromOwned(await http.getOrNull(OWNED_PATH));
   if (owned?.length) return { ids: new Set(owned), source: "owned champions" };
   return null;
+}
+
+/**
+ * The bench champions I can swap for: what League's pickable list says, plus what I can play.
+ * ARAM's pickable list adds champions I don't own (live, 2026-11-20: 107 pickable with 63 owned or
+ * free), and the PC's bench lock follows it; ownership alone locked some the PC allowed. Either
+ * source alone counts when the other is missing. Null when neither is known: then nothing is locked.
+ */
+export function benchAllowed(pickable: readonly number[] | null | undefined, playable: ReadonlySet<number> | null | undefined): ReadonlySet<number> | null {
+  if (!pickable?.length) return playable?.size ? playable : null;
+  return new Set([...pickable, ...(playable ?? [])]);
 }

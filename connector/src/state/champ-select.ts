@@ -5,6 +5,7 @@
  * Copyright (c) 2017 Thijs Molendijk, MIT License. See NOTICE.
  */
 
+import { benchAllowed } from "../ownership";
 import type { ActionType, ChampSelectPlayer, ChampSelectView, SwapKind, SwapState } from "../shared/phone-api";
 
 /** The subset of /lol-champ-select/v1/session we rely on. */
@@ -300,6 +301,12 @@ export function timeLeftMs(timer: LcuSession["timer"], now = Date.now()): number
   return Math.max(0, Math.round(ms));
 }
 
+/** Bench champions I can't swap for (empty when that isn't known). */
+function lockedOnBench(session: LcuSession, allowed: ReadonlySet<number> | null): number[] {
+  if (session.isSpectating || !allowed) return [];
+  return (benchChampions(session) ?? []).filter((id) => !allowed.has(id));
+}
+
 export function deriveChampSelect(
   session: LcuSession,
   pickable: number[] | null,
@@ -330,7 +337,7 @@ export function deriveChampSelect(
     mySkinId: pos(me?.selectedSkinId),
     lockedChampionIds: lockedChampions(session),
     bench: session.isSpectating ? null : benchChampions(session),
-    benchLocked: session.isSpectating || !playable ? [] : (benchChampions(session) ?? []).filter((id) => !playable.has(id)),
+    benchLocked: lockedOnBench(session, benchAllowed(pickable, playable)),
     rerollsLeft: rerollsLeft(session),
     choices: session.allowSubsetChampionPicks ? positiveIds(subset) : [],
   };

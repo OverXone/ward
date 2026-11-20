@@ -163,6 +163,19 @@ describe("store bench ownership", () => {
     expect(store.playableChampions()).toBeNull();
   });
 
+  it("unlocks an unowned bench champion once League's pickable list includes it", async () => {
+    const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [GRID_PATH]: grid });
+    const store = new Store();
+    store.setLcuStatus("connected");
+    store.attach(lcu.http);
+    await tick();
+    store.handleEvent(event(URI.session, aramSession()));
+    for (let i = 0; i < 4; i++) await tick();
+    expect(store.state.champSelect?.benchLocked).toEqual([51]);
+    store.handleEvent(event(URI.pickable, [22, 51, 202]));
+    expect(store.state.champSelect?.benchLocked).toEqual([]);
+  });
+
   it("falls back to the owned-champions list, and locks nothing when neither answers", async () => {
     const owned = [{ id: 22, ownership: { owned: true } }, { id: 51, ownership: { owned: false, rental: { rented: false } } }];
     const lcu = fakeHttp({ [URI.phase]: "ChampSelect", [OWNED_PATH]: owned });
