@@ -27,6 +27,7 @@ import {
   type LcuSession,
 } from "./state/champ-select";
 import { log } from "./log";
+import { benchAllowed } from "./ownership";
 import { canChangeMode, championIds, URI, type RawLobby } from "./state/store";
 
 export class ActionError extends Error {
@@ -447,9 +448,9 @@ const ACTIONS = {
       const bench = benchChampions(session);
       if (!bench) throw new ActionError(409, "This mode has no bench");
       if (!bench.includes(championId)) throw new ActionError(409, "That champion isn't on the bench anymore");
-      // A swap for a champion I don't own did nothing and showed no error (ARAM, 2026-11-17); the PC locks those.
-      const playable = ctx.playable?.();
-      if (playable && !playable.has(championId)) throw new ActionError(409, "You don't own that champion, so you can't swap for it");
+      // A swap for a champion I can't take did nothing and showed no error (ARAM, 2026-11-17); the PC locks those.
+      const allowed = benchAllowed(ctx.lists?.().pickable, ctx.playable?.());
+      if (allowed && !allowed.has(championId)) throw new ActionError(409, "You don't own that champion, so you can't swap for it");
       const status = await call(http, "POST", `/lol-champ-select/v1/session/bench/swap/${championId}`);
       if (status === 404) throw new ActionError(502, "This League client can't swap from the bench from here. Use your PC.");
     },

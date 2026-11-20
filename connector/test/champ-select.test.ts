@@ -181,6 +181,16 @@ describe("ARAM and choose-from-a-few modes", () => {
     expect(deriveChampSelect(draftSession(), [], [], 0, null, new Set([22])).benchLocked).toEqual([]);
   });
 
+  it("doesn't lock champions ARAM's pickable list adds, even unowned (live ARAM, 2026-11-20)", () => {
+    // 51 isn't owned but League lets me pick it in this mode, like the PC: no lock.
+    expect(deriveChampSelect(aramSession(), [22, 51], [], 0, null, new Set([22])).benchLocked).toEqual([]);
+    // Not owned and not pickable: locked, whether or not ownership is known.
+    expect(deriveChampSelect(aramSession(), [22, 99], [], 0, null, new Set([22])).benchLocked).toEqual([51]);
+    expect(deriveChampSelect(aramSession(), [22, 99], []).benchLocked).toEqual([51]);
+    // Owned but missing from the pickable list: the list may lag, so ownership still unlocks it.
+    expect(deriveChampSelect(aramSession(), [99], [], 0, null, new Set([22, 51])).benchLocked).toEqual([]);
+  });
+
   it("hides the bench and rerolls while spectating", () => {
     const s = aramSession();
     s.isSpectating = true;
