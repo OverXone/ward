@@ -16,11 +16,14 @@ import WebSocket from "ws";
 import type { PhoneState } from "../src/shared/phone-api";
 
 const PORT = 47899;
+/** The mock game's live data port (the real game uses 2999). */
+const GAME_PORT = 47897;
 const root = path.resolve(__dirname, "..");
 let out = "";
 let state: PhoneState | null = null;
 const dataDir = mkdtempSync(path.join(os.tmpdir(), "ward-smoke-"));
 process.env.WARD_DATA_DIR = dataDir; // inherited by the connector
+process.env.WARD_LIVE_GAME_PORT = String(GAME_PORT);
 
 function start(file: string, args: string[] = [], onLine?: (l: string) => void): ChildProcess {
   const p = spawn(process.execPath, ["--import", "tsx", file, ...args], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
@@ -60,7 +63,7 @@ function check(cond: unknown, msg: string): void {
 async function main() {
   // --- mock LCU ---
   let mockLines: string[] = [];
-  const mockArgs = process.argv.slice(2); // e.g. --no-complete
+  const mockArgs = [...process.argv.slice(2), "--game-port", String(GAME_PORT)]; // e.g. --no-complete
   let mock = start("dev/mock-lcu.ts", mockArgs, (l) => mockLines.push(l));
   const dir = await waitFor("mock lockfile dir", () => /--league-dir "([^"]+)"/.exec(mockLines.join("\n"))?.[1]);
   const lcuPassword = readFileSync(path.join(dir, "lockfile"), "utf8").split(":")[3]!;
@@ -211,7 +214,9 @@ async function main() {
   await waitFor("locked", () => state?.champSelect?.hasLockedPick);
   check(state!.champSelect!.myTeam.find((p) => p.isMe)!.championId === choice, "my locked champion shown");
   await waitFor("InProgress", () => state?.phase === "InProgress", 60_000);
-  check(true, "game started (InProgress)");
+  check(state!.game === "loading", "loading screen shown while the game loads");
+  await waitFor("game loaded", () => state?.game === "playing", 15_000);
+  check(state!.phase === "InProgress", "game started once its clock runs");
   mockKey("i");
   await waitFor("invitation in game", () => state?.invitations.length === 1);
   check((await act("invitations/accept", { invitation: state!.invitations[0]!.handle })).status === 409, "can't join a lobby mid-game");

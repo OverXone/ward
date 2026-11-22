@@ -208,6 +208,11 @@ export interface PhoneState {
   readyCheck: ReadyCheckView | null;
   champSelect: ChampSelectView | null;
   invitations: InvitationView[];
+  /**
+   * While a game has launched (GameStart, InProgress): still on the loading screen, or started.
+   * Null in every other phase. League's own phase can't tell these apart; the game's live data can.
+   */
+  game: "loading" | "playing" | null;
   /** The chat of the lobby or champ select I'm in (null when there's none). */
   chat: ChatView | null;
 }
