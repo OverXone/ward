@@ -334,6 +334,15 @@ describe("ARAM bench and rerolls", () => {
     expect(lcu.writes().map((w) => w.path)).toEqual(["/lol-champ-select/v1/session/bench/swap/22", "/lol-champ-select/v1/session/bench/swap/51"]);
   });
 
+  it("swaps for an unowned bench champion that League's pickable list allows (ARAM, 2026-11-20)", async () => {
+    const lcu = aram(aramSession(), { "POST /lol-champ-select/v1/session/bench/swap/51": ok() });
+    const lists = (pickable: number[]) => () => ({ pickable, bannable: [] });
+    await runAction("champ-select/bench", { championId: 51 }, { http: lcu.http, playable: () => new Set([22]), lists: lists([22, 51]) });
+    expect(lcu.writes()).toHaveLength(1);
+    await expectError(runAction("champ-select/bench", { championId: 51 }, { http: lcu.http, playable: () => null, lists: lists([22]) }), 409, /don't own/);
+    expect(lcu.writes()).toHaveLength(1);
+  });
+
   it("refuses bench swaps outside bench modes", async () => {
     const lcu = aram(draftSession());
     await expectError(run("champ-select/bench", { championId: 22 }, lcu.http), 409, /no bench/);

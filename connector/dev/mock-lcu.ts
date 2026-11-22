@@ -62,6 +62,8 @@ const CHAMPIONS: { id: number; name: string; alias: string; color: [number, numb
 const ALL_IDS = CHAMPIONS.map((c) => c.id);
 /** Every third champion isn't owned, so ARAM's bench shows some with a lock. */
 const OWNED = new Set(ALL_IDS.filter((_, i) => i % 3 !== 2));
+/** Like the live client (2026-11-20), ARAM lets me pick some champions I don't own: half of them here. */
+const ARAM_PICKABLE = new Set(ALL_IDS.filter((x, i) => OWNED.has(x) || i % 6 === 2));
 
 function png(color: [number, number, number], size = 32): Buffer {
   const chunk = (type: string, data: Buffer) => {
@@ -639,7 +641,7 @@ function publishSession(): void {
   refreshTrades();
   const taken = takenIds();
   const banned = new Set(allActions().filter((a) => a.type === "ban" && a.completed).map((a) => a.championId));
-  set(URIS.pickable, ALL_IDS.filter((x) => !taken.has(x)));
+  set(URIS.pickable, ALL_IDS.filter((x) => !taken.has(x) && (!session.benchEnabled || ARAM_PICKABLE.has(x))));
   set(URIS.bannable, ALL_IDS.filter((x) => !banned.has(x)));
   session.timer.internalNowInEpochMs = Date.now();
   session.timer.adjustedTimeLeftInPhase = Math.max(0, phaseEndsAt - Date.now());
@@ -979,8 +981,8 @@ async function handle(req: any, res: any): Promise<void> {
   if (bench && m === "POST" && session?.benchEnabled) {
     const i = (session.benchChampions as { championId: number }[]).findIndex((b) => b.championId === Number(bench[1]));
     if (i < 0) return lcuError(res, 400, "CHAMPION_NOT_ON_BENCH");
-    // Like the live client (2026-11-17): swapping for a champion I don't own succeeds and does nothing.
-    if (!OWNED.has(Number(bench[1]))) return void res.writeHead(204).end();
+    // Like the live client (2026-11-17): swapping for a champion I can't pick succeeds and does nothing.
+    if (!ARAM_PICKABLE.has(Number(bench[1]))) return void res.writeHead(204).end();
     const me = memberByCell(LOCAL_CELL);
     const [taken] = session.benchChampions.splice(i, 1, { championId: me.championId, isPriority: false });
     me.championId = taken.championId;
