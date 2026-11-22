@@ -4,6 +4,8 @@
  *   npm run mock-lcu                       start (prints the --league-dir to pass to the connector)
  *   npm run mock-lcu -- --no-complete      make POST .../complete return 404 (tests the PATCH fallback)
  *   npm run mock-lcu -- --lazy-complete    make POST .../complete answer 204 without locking (like a live client did)
+ *   npm run mock-lcu -- --game-port 47897  serve the game's live data there instead of 2999
+ *                                          (then start the connector with WARD_LIVE_GAME_PORT=47897)
  *
  * Serves HTTPS + WSS on 127.0.0.1 with a throwaway self-signed cert and writes a
  * lockfile into a temp folder. Shapes are modelled on the real client but
@@ -28,6 +30,10 @@ import { WebSocketServer, WebSocket } from "ws";
 const noComplete = process.argv.includes("--no-complete");
 // Imitates what a live client did on 2026-11-12: POST .../complete answers 204 but locks nothing.
 const lazyComplete = process.argv.includes("--lazy-complete");
+const gamePortArg = process.argv.indexOf("--game-port");
+const GAME_PORT = gamePortArg >= 0 ? Number(process.argv[gamePortArg + 1]) : 2999;
+/** How long the mock game's loading screen lasts. */
+const LOADING_MS = 4000;
 
 // ---------- static data ----------
 
@@ -723,7 +729,29 @@ function toGame(): void {
   set(URIS.subset, null);
   set(URIS.phase, "GameStart");
   later(1500, () => set(URIS.phase, "InProgress"));
-  say("phase GameStart -> InProgress");
+  gameLoadsAt = Date.now() + LOADING_MS;
+  say(`phase GameStart -> InProgress, loading screen for ${LOADING_MS / 1000}s`);
+}
+
+// ---------- the game's Live Client Data API ----------
+
+/** When the mock game finishes loading (its clock starts). */
+let gameLoadsAt = 0;
+
+/**
+ * GET /liveclientdata/gamestats, like the game on port 2999. Riot's docs don't say what it answers
+ * on the loading screen; this mock answers 404 then, and drops the connection when no game runs.
+ */
+function handleLiveGame(req: any, res: any): void {
+  const phase = state[URIS.phase];
+  if (phase !== "GameStart" && phase !== "InProgress") return void req.socket.destroy();
+  if (req.method !== "GET" || req.url !== "/liveclientdata/gamestats") return lcuError(res, 404, "not mocked");
+  const gameTime = (Date.now() - gameLoadsAt) / 1000;
+  if (gameTime <= 0) {
+    res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ errorCode: "RESOURCE_NOT_FOUND", httpStatus: 404, message: "No game data yet" }));
+    return;
+  }
+  res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ gameMode: "CLASSIC", gameTime, mapName: "Map11", mapNumber: 11, mapTerrain: "Default" }));
 }
 
 // ---------- HTTP ----------
@@ -1032,6 +1060,9 @@ const dir = path.join(os.tmpdir(), "ward-mock");
 
 void selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType: "ec", notAfterDate: new Date(Date.now() + 86_400_000) }).then((pems) => {
   const server = https.createServer({ key: pems.private, cert: pems.cert }, (req, res) => void handle(req, res));
+  const game = https.createServer({ key: pems.private, cert: pems.cert }, handleLiveGame);
+  game.on("error", (e: NodeJS.ErrnoException) => say(`game live data not served on port ${GAME_PORT} (${e.code ?? e.message}); the phone will show "Game in progress" only after Ward gives up waiting`));
+  game.listen(GAME_PORT, "127.0.0.1");
   const wss = new WebSocketServer({ noServer: true });
   server.on("upgrade", (req, socket, head) => {
     if (req.headers.authorization !== expectedAuth) {

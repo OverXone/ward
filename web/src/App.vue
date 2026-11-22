@@ -37,6 +37,8 @@ const view = computed<View>(() => {
       return { kind: "status", title: "Match found", spinner: true };
     case "GameStart":
     case "InProgress":
+      if (s.game === "loading") return { kind: "status", title: "Loading into game", sub: "Your game starts once everyone has loaded in.", spinner: true };
+      return { kind: "status", title: "Game in progress", sub: "Good luck, have fun!", emoji: "⚔️" };
     case "Reconnect":
       return { kind: "status", title: "Game in progress", sub: "Good luck, have fun!", emoji: "⚔️" };
     case "WaitingForStats":

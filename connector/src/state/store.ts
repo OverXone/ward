@@ -14,6 +14,10 @@ import { Chat, CHAT_CONVERSATIONS, chatRoomFor, type ChatMember, type ChatRoom }
 import type { InvitationView, LcuStatus, LobbyView, PhoneState, QueueView, ReadyCheckView, Role } from "../shared/phone-api";
 import { readPlayableChampions } from "../ownership";
 import { deriveChampSelect, describeMode, type LcuSession } from "./champ-select";
+import { LiveGameWatch, type LiveGameOptions } from "../live-game";
+
+/** Phases in which a game has been launched: the game itself says whether it's still loading. */
+const GAME_PHASES: ReadonlySet<string> = new Set(["GameStart", "InProgress"]);
 
 export const URI = {
   phase: "/lol-gameflow/v1/gameflow-phase",
@@ -228,7 +232,15 @@ export class Store extends EventEmitter {
   readonly handles = new Handles();
   /** The lobby's or champ select's chat. */
   readonly chat = new Chat(() => this.recompute());
-  state: PhoneState = this.derive();
+  /** Loading screen or started, while a game runs (see live-game.ts). */
+  private readonly liveGame: LiveGameWatch;
+  state: PhoneState;
+
+  constructor(opts: { liveGame?: LiveGameOptions } = {}) {
+    super();
+    this.liveGame = new LiveGameWatch(() => this.recompute(), opts.liveGame);
+    this.state = this.derive();
+  }
 
   setLcuStatus(status: LcuStatus): void {
     this.lcuStatus = status;
@@ -523,6 +535,7 @@ export class Store extends EventEmitter {
       readyCheck: connected ? deriveReadyCheck(r.readyCheck) : null,
       champSelect: connected && r.session ? deriveChampSelect(r.session, r.pickable, r.bannable, Date.now(), r.subset, this.playable) : null,
       invitations: connected ? deriveInvitations(r.invitations, this.inviterNames, this.queueNames, this.handles) : [],
+      game: connected && r.phase !== null && GAME_PHASES.has(r.phase) ? (this.liveGame?.stage ?? null) : null,
       chat: null,
     };
   }
@@ -561,6 +574,9 @@ export class Store extends EventEmitter {
   }
 
   private recompute(): void {
+    const inGame = this.lcuStatus === "connected" && this.raw.phase !== null && GAME_PHASES.has(this.raw.phase);
+    if (inGame) this.liveGame.start();
+    else this.liveGame.stop();
     const next = this.derive();
     this.chat.setRoom(this.chatRoom(next));
     next.chat = this.chat.view();
