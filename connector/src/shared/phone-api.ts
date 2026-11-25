@@ -140,6 +140,9 @@ export interface ChampSelectView {
   choices: number[];
 }
 
+/** Smite's spell id. Junglers have to take it; with roles assigned, nobody else can. */
+export const SMITE_SPELL_ID = 11;
+
 /** A summoner spell I can take into this game (GET /api/spells). */
 export interface SpellOption {
   id: number;

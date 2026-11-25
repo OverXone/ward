@@ -1,14 +1,15 @@
 <script setup lang="ts">
-import type { SkinOption, SpellOption } from "@shared/phone-api";
+import { SMITE_SPELL_ID, type SkinOption, type SpellOption } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
 import * as api from "../api";
 import { run, showToast } from "../store";
 import AssetImage from "./AssetImage.vue";
 
 /** My summoner spells (always) and skin (once I have a champion), each opening a picker. */
-const props = defineProps<{ spells: [number, number]; skinId: number; championId: number; canPickSkin: boolean }>();
+const props = defineProps<{ spells: [number, number]; skinId: number; championId: number; canPickSkin: boolean; position: string }>();
 
 // The spell list rarely changes within a champ select: load once, keep names for the labels.
+// It depends on my role (Smite is for junglers only), so a role swap loads it again.
 const spellList = ref<SpellOption[] | null>(null);
 const spellName = (id: number) => spellList.value?.find((s) => s.id === id)?.name ?? "";
 async function loadSpells(): Promise<boolean> {
@@ -22,6 +23,16 @@ async function loadSpells(): Promise<boolean> {
   }
 }
 void loadSpells();
+watch(
+  () => props.position,
+  () => {
+    spellList.value = null;
+    void loadSpells();
+  },
+);
+
+/** Junglers can't take Smite off, so its slot doesn't open a picker. */
+const locked = (slot: 0 | 1) => props.position === "jungle" && props.spells[slot] === SMITE_SPELL_ID;
 
 // Skins depend on the champion: reload whenever it changes.
 const skins = ref<SkinOption[] | null>(null);
@@ -48,6 +59,10 @@ const sheet = ref<null | { kind: "spell"; slot: 0 | 1 } | { kind: "skin" }>(null
 const busy = ref(false);
 
 async function openSpell(slot: 0 | 1) {
+  if (locked(slot)) {
+    showToast("Junglers have to take Smite. Change your other spell.", "info");
+    return;
+  }
   if (await loadSpells()) sheet.value = { kind: "spell", slot };
 }
 
@@ -75,9 +90,19 @@ async function chooseSkin(id: number) {
 
 <template>
   <section class="loadout" aria-label="Your spells and skin">
-    <button v-for="slot in [0, 1] as const" :key="slot" class="spell" :aria-label="`Spell ${slot === 0 ? 'D' : 'F'}: ${spellName(spells[slot]) || 'none'}`" @click="openSpell(slot)">
+    <button
+      v-for="slot in [0, 1] as const"
+      :key="slot"
+      class="spell"
+      :class="{ locked: locked(slot) }"
+      :aria-label="`Spell ${slot === 0 ? 'D' : 'F'}: ${spellName(spells[slot]) || 'none'}${locked(slot) ? ' (junglers keep Smite)' : ''}`"
+      @click="openSpell(slot)"
+    >
       <AssetImage kind="spell" :id="spells[slot]" :width="40" :label="spellName(spells[slot]) || '?'" />
       <span class="key">{{ slot === 0 ? "D" : "F" }}</span>
+      <span v-if="locked(slot)" class="lock" aria-hidden="true">
+        <svg viewBox="0 0 16 16" width="10" height="10"><path fill="currentColor" d="M4 7V5a4 4 0 1 1 8 0v2h1v8H3V7h1Zm2 0h4V5a2 2 0 1 0-4 0v2Z" /></svg>
+      </span>
     </button>
     <button v-if="canPickSkin && skins?.length" class="skin" @click="sheet = { kind: 'skin' }">
       <span class="skin-label">Skin</span>
@@ -155,6 +180,22 @@ async function chooseSkin(id: number) {
   border: 1px solid var(--border);
   border-radius: 12px;
   background: transparent;
+}
+.spell.locked {
+  opacity: 0.85;
+}
+.lock {
+  position: absolute;
+  left: -4px;
+  top: -4px;
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 6px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
 }
 .key {
   position: absolute;

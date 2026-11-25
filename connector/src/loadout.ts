@@ -5,6 +5,7 @@
  * - /lol-game-data/assets/v1/summoner-spells.json   every spell: id, name, gameModes, iconPath
  * - /lol-summoner/v1/current-summoner + /lol-collections/v1/inventories/{summonerId}/spells   spells I own
  * - /lol-gameflow/v1/session   the current game mode (only `gameData.queue.gameMode` is read)
+ * - /lol-champ-select/v1/session   my assigned position (only `localPlayerCellId` and `myTeam[].assignedPosition`)
  * - /lol-champ-select/v1/skin-carousel-skins   skins (with chromas) for my champion, with `unlocked`
  *
  * Images are only ever fetched from paths the client itself listed for an id we validated, and only
@@ -12,7 +13,7 @@
  */
 
 import type { LcuHttp } from "./lcu/http";
-import type { SkinOption, SpellOption } from "./shared/phone-api";
+import { SMITE_SPELL_ID, type SkinOption, type SpellOption } from "./shared/phone-api";
 
 const SPELLS_PATH = "/lol-game-data/assets/v1/summoner-spells.json";
 const CAROUSEL_PATH = "/lol-champ-select/v1/skin-carousel-skins";
@@ -42,7 +43,23 @@ interface RawSkin {
 const isId = (v: unknown): v is number => Number.isInteger(v) && (v as number) > 0;
 const text = (v: unknown, max = 60) => (typeof v === "string" ? v.slice(0, max) : "");
 const assetPath = (v: unknown) => (typeof v === "string" && ASSET_PATH.test(v) && !v.includes("..") ? v : null);
+/**
+ * Smite only for junglers: with roles assigned, League's own client doesn't offer Smite to anyone
+ * else (the mobile client still listed it, and equipping it did nothing). No assigned role (blind
+ * pick, ARAM...) means no rule, so it's left to the game mode filter.
+ */
+export function smiteAllowed(position: string): boolean {
+  return position === "" || position === "jungle";
+}
+
 const color = (v: unknown) => (Array.isArray(v) && typeof v[0] === "string" && /^#[0-9a-f]{6}$/i.test(v[0]) ? v[0] : null);
+
+/** My assigned position in this champ select, lowercased ("" when none or unknown). */
+function myPosition(cs: { localPlayerCellId?: unknown; myTeam?: unknown } | null): string {
+  if (!cs || !Array.isArray(cs.myTeam)) return "";
+  const me = (cs.myTeam as { cellId?: unknown; assignedPosition?: unknown }[]).find((m) => m?.cellId === cs.localPlayerCellId);
+  return typeof me?.assignedPosition === "string" ? me.assignedPosition.toLowerCase() : "";
+}
 
 export class Loadout {
   private http: LcuHttp | null = null;
@@ -82,9 +99,10 @@ export class Loadout {
     const http = this.http;
     const all = await this.allSpells();
     if (!http || !all) return null;
-    const [flow, me] = await Promise.all([
+    const [flow, me, cs] = await Promise.all([
       http.getOrNull<{ gameData?: { queue?: { gameMode?: unknown } } }>("/lol-gameflow/v1/session"),
       http.getOrNull<{ summonerId?: unknown }>("/lol-summoner/v1/current-summoner"),
+      http.getOrNull<{ localPlayerCellId?: unknown; myTeam?: unknown }>("/lol-champ-select/v1/session"),
     ]);
     const mode = typeof flow?.gameData?.queue?.gameMode === "string" ? flow.gameData.queue.gameMode : null;
     let owned: Set<number> | null = null;
@@ -94,7 +112,8 @@ export class Loadout {
     }
     const list = all.filter((s) => (!mode || s.modes.includes(mode)) && (!owned || owned.has(s.id)));
     for (const s of list) if (s.icon) this.imagePaths.set(`spell:${s.id}`, s.icon);
-    return list.map(({ id, name }) => ({ id, name }));
+    const position = myPosition(cs);
+    return list.filter((s) => s.id !== SMITE_SPELL_ID || smiteAllowed(position)).map(({ id, name }) => ({ id, name }));
   }
 
   /** Skins (and their chromas) I can use on my current champion; empty before I've picked. */

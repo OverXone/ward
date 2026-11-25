@@ -13,7 +13,7 @@ import { friendKey, readFriends } from "./friends";
 import { HANDLE_RE, type HandleKind, type Handles } from "./handles";
 import { lcuErrorMessage, type HttpMethod, type LcuHttp } from "./lcu/http";
 import { listQueues } from "./queues";
-import { PICKABLE_ROLES, SWAP_KINDS, type Role, type SwapKind } from "./shared/phone-api";
+import { PICKABLE_ROLES, SMITE_SPELL_ID, SWAP_KINDS, type Role, type SwapKind } from "./shared/phone-api";
 import {
   bannedChampions,
   benchChampions,
@@ -419,7 +419,13 @@ const ACTIONS = {
     validate: (input) => void spellsFrom(input),
     async run(input, http, ctx) {
       const [spell1Id, spell2Id] = spellsFrom(input);
-      await assertInChampSelect(http);
+      const session = await getSession(http);
+      if (session.isSpectating) throw new ActionError(409, "You're spectating this champion select");
+      const me = session.myTeam?.find((m) => m.cellId === session.localPlayerCellId);
+      const jungle = typeof me?.assignedPosition === "string" && me.assignedPosition.toLowerCase() === "jungle";
+      if (jungle && spell1Id !== SMITE_SPELL_ID && spell2Id !== SMITE_SPELL_ID) {
+        throw new ActionError(400, "Junglers have to take Smite");
+      }
       const available = await ctx.loadout?.availableSpells();
       if (!available?.length) throw new ActionError(503, "Couldn't read your summoner spells from League");
       const ids = new Set(available.map((s) => s.id));

@@ -48,6 +48,25 @@ describe("summoner spells", () => {
     expect((await l.availableSpells())?.map((s) => s.id)).toEqual([4, 32, 13, 99]);
   });
 
+  it("offers Smite only to the jungler when roles are assigned", async () => {
+    const withSmite = {
+      ...base,
+      "/lol-game-data/assets/v1/summoner-spells.json": [...SPELLS, { id: 11, name: "Smite", gameModes: ["CLASSIC"], iconPath: "/lol-game-data/assets/Smite.png" }],
+      "/lol-collections/v1/inventories/77/spells": { spells: [4, 11] },
+    };
+    const as = async (position: string | null) => {
+      const l = new Loadout();
+      const cs = position === null ? null : { localPlayerCellId: 3, myTeam: [{ cellId: 1, assignedPosition: "JUNGLE" }, { cellId: 3, assignedPosition: position }] };
+      l.attach(fakeLcu({ ...withSmite, "/lol-champ-select/v1/session": cs }).http);
+      return (await l.availableSpells())?.map((s) => s.id);
+    };
+    expect(await as("MIDDLE")).toEqual([4]);
+    expect(await as("utility")).toEqual([4]);
+    expect(await as("JUNGLE")).toEqual([4, 11]);
+    expect(await as("")).toEqual([4, 11]); // blind pick: no roles
+    expect(await as(null)).toEqual([4, 11]); // not in champ select / unreadable
+  });
+
   it("serves icons only from client-listed asset paths", async () => {
     const lcu = fakeLcu(base);
     const l = new Loadout();

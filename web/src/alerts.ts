@@ -68,6 +68,12 @@ export function myTurnAlert(): void {
   chime([880, 1175]);
 }
 
+/** 10 seconds left on my pick or ban. */
+export function hurryAlert(): void {
+  vibrate([300, 120, 300, 120, 300]);
+  chime([1175, 1175, 1175], 0.18);
+}
+
 export function swapRequestAlert(): void {
   vibrate([150, 80, 150, 80, 150]);
   chime([988, 784, 988]);
