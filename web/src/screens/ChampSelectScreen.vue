@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { SWAP_KINDS, type ChampSelectView } from "@shared/phone-api";
 import { computed, ref, watch } from "vue";
-import { myTurnAlert, swapRequestAlert } from "../alerts";
+import { hurryAlert, myTurnAlert, swapRequestAlert } from "../alerts";
 import BenchPanel from "../components/BenchPanel.vue";
 import ChampGrid from "../components/ChampGrid.vue";
 import ChampIcon from "../components/ChampIcon.vue";
@@ -157,16 +157,24 @@ const subline = computed(() => {
 
 const tone = computed(() => (props.cs.myTurn ? props.cs.myTurn.type : "idle"));
 const seconds = computed(() => champSelectSecondsLeft());
+
+// The last 10 seconds of my pick or ban: the screen flashes red so it's hard to miss.
+const HURRY_SECONDS = 10;
+const hurry = computed(() => !!props.cs.myTurn && !props.cs.isInfinite && seconds.value <= HURRY_SECONDS);
+watch(hurry, (now, before) => {
+  if (now && !before) hurryAlert();
+});
 </script>
 
 <template>
-  <main class="screen cs">
+  <main class="screen cs" :class="{ hurry }">
+    <div v-if="hurry" class="hurry-flash" aria-hidden="true"></div>
     <header class="head" :class="tone">
       <div class="head-text">
         <h1 class="headline">{{ headline }}</h1>
         <p v-if="subline" class="subline">{{ subline }}</p>
       </div>
-      <div v-if="!cs.isInfinite" class="clock mono" :class="{ low: seconds <= 5 }">{{ seconds }}</div>
+      <div v-if="!cs.isInfinite" class="clock mono" :class="{ low: hurry || seconds <= 5 }">{{ seconds }}</div>
       <ChatButton compact />
     </header>
 
@@ -193,6 +201,7 @@ const seconds = computed(() => champSelectSecondsLeft());
       :skin-id="cs.mySkinId"
       :champion-id="me.championId"
       :can-pick-skin="cs.hasLockedPick"
+      :position="me.position"
     />
 
     <SwapSheet v-if="sheetPlayer" :player="sheetPlayer" :me="me" @close="sheetCell = null" />
@@ -259,6 +268,47 @@ const seconds = computed(() => champSelectSecondsLeft());
 .head.ban {
   background: rgba(229, 72, 77, 0.14);
   border-color: var(--danger);
+}
+/* Last 10 seconds of my turn: a red glow around the whole screen and a pulsing header. */
+.hurry-flash {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+  box-shadow: inset 0 0 0 4px var(--danger), inset 0 0 60px 16px rgba(229, 72, 77, 0.55);
+  animation: hurry-flash 0.8s ease-in-out infinite alternate;
+}
+@keyframes hurry-flash {
+  from {
+    opacity: 0.25;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.hurry .head {
+  border-color: var(--danger);
+  animation: hurry-head 0.8s ease-in-out infinite alternate;
+}
+@keyframes hurry-head {
+  from {
+    background: rgba(229, 72, 77, 0.12);
+  }
+  to {
+    background: rgba(229, 72, 77, 0.42);
+  }
+}
+.hurry .clock {
+  font-size: 38px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .hurry-flash,
+  .hurry .head {
+    animation: none;
+  }
+  .hurry .head {
+    background: rgba(229, 72, 77, 0.3);
+  }
 }
 .head-text {
   flex: 1;

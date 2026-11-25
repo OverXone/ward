@@ -278,6 +278,15 @@ describe("loadout", () => {
     expect(l.writes()).toHaveLength(0);
   });
 
+  it("keeps Smite on a jungler", async () => {
+    const jungle = { ...draftSession(), localPlayerCellId: 1 }; // cell 1 is the jungler
+    const smite = { ...loadout, availableSpells: async () => [{ id: 4 }, { id: 11 }, { id: 14 }] };
+    const l = fakeLcu({ "GET /lol-champ-select/v1/session": ok(jungle), "PATCH /lol-champ-select/v1/session/my-selection": ok() });
+    await expectError(runAction("champ-select/spells", { spell1Id: 4, spell2Id: 14 }, { http: l.http, loadout: smite }), 400, /Smite/);
+    await runAction("champ-select/spells", { spell1Id: 11, spell2Id: 4 }, { http: l.http, loadout: smite });
+    expect(l.writes()).toEqual([{ method: "PATCH", path: "/lol-champ-select/v1/session/my-selection", body: { spell1Id: 11, spell2Id: 4 } }]);
+  });
+
   it("sets a usable skin or chroma, nothing else", async () => {
     const l = lcu();
     await runAction("champ-select/skin", { skinId: 103021 }, { http: l.http, loadout });
