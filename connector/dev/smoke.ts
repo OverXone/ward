@@ -216,7 +216,7 @@ async function main() {
   await waitFor("InProgress", () => state?.phase === "InProgress", 60_000);
   check(state!.game === "loading", "loading screen shown while the game loads");
   await waitFor("game loaded", () => state?.game === "playing", 15_000);
-  check(state!.phase === "InProgress", "game started once its clock runs");
+  check(state!.phase === "InProgress", "game started once it sent GameStart");
   mockKey("i");
   await waitFor("invitation in game", () => state?.invitations.length === 1);
   check((await act("invitations/accept", { invitation: state!.invitations[0]!.handle })).status === 409, "can't join a lobby mid-game");

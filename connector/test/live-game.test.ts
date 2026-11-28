@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import selfsigned from "selfsigned";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LcuHttp } from "../src/lcu/http";
-import { GAMESTATS_PATH, LiveGameWatch, hasStarted, liveGamePort, probeLiveGame, type GameProbe } from "../src/live-game";
+import { EVENTDATA_PATH, LiveGameWatch, hasStarted, liveGamePort, probeLiveGame, type GameProbe } from "../src/live-game";
 import { Store, URI } from "../src/state/store";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
@@ -21,16 +21,17 @@ function scripted(...answers: GameProbe[]) {
 afterEach(() => vi.useRealTimers());
 
 describe("live game watch", () => {
-  it("counts only a running clock as started", () => {
-    expect(hasStarted({ gameTime: 3.2 })).toBe(true);
-    expect(hasStarted({ gameTime: 0 })).toBe(false);
+  it("counts only a GameStart event as started", () => {
+    expect(hasStarted({ events: 1, gameStart: 0.05 })).toBe(true);
+    expect(hasStarted({ events: 0, gameStart: null })).toBe(false);
+    expect(hasStarted({ events: 3, gameStart: null })).toBe(false);
     expect(hasStarted({ status: 404 })).toBe(false);
     expect(hasStarted({ error: "ECONNREFUSED" })).toBe(false);
   });
 
-  it("stays loading until the clock runs, then stops asking", async () => {
+  it("stays loading until GameStart, then stops asking", async () => {
     vi.useFakeTimers();
-    const { probe, calls } = scripted({ error: "ECONNREFUSED" }, { status: 404 }, { gameTime: 0 }, { gameTime: 1.5 });
+    const { probe, calls } = scripted({ error: "ECONNREFUSED" }, { status: 404 }, { events: 0, gameStart: null }, { events: 1, gameStart: 0.05 });
     const onChange = vi.fn();
     const w = new LiveGameWatch(onChange, { probe, intervalMs: 1000 });
     w.start();
@@ -62,7 +63,7 @@ describe("live game watch", () => {
     const w = new LiveGameWatch(onChange, { probe: () => new Promise((r) => (answer = r)) });
     w.start();
     w.stop();
-    answer({ gameTime: 10 });
+    answer({ events: 1, gameStart: 0.05 });
     await tick();
     expect(w.stage).toBeNull();
     expect(onChange).not.toHaveBeenCalled();
@@ -76,7 +77,7 @@ describe("live game watch", () => {
 });
 
 describe("live game probe", () => {
-  it("reads the clock from a self-signed local server and reports other answers", async () => {
+  it("reads the event list from a self-signed local server and reports other answers", async () => {
     const pems = await selfsigned.generate([{ name: "commonName", value: "127.0.0.1" }], { keyType: "ec" });
     let reply: { status: number; body: string } = { status: 404, body: '{"errorCode":"RESOURCE_NOT_FOUND"}' };
     const paths: string[] = [];
@@ -88,11 +89,15 @@ describe("live game probe", () => {
     const port = (server.address() as AddressInfo).port;
     try {
       expect(await probeLiveGame(port)).toEqual({ status: 404 });
-      reply = { status: 200, body: '{"gameMode":"CLASSIC","gameTime":12.5,"mapName":"Map11"}' };
-      expect(await probeLiveGame(port)).toEqual({ gameTime: 12.5 });
+      reply = { status: 200, body: '{"Events":[]}' };
+      expect(await probeLiveGame(port)).toEqual({ events: 0, gameStart: null });
+      reply = { status: 200, body: '{"Events":[{"EventID":0,"EventName":"GameStart","EventTime":0.0563616},{"EventID":1,"EventName":"MinionsSpawning","EventTime":65.0}]}' };
+      expect(await probeLiveGame(port)).toEqual({ events: 2, gameStart: 0.0563616 });
+      reply = { status: 200, body: '{"gameMode":"CLASSIC","gameTime":12.5}' };
+      expect(await probeLiveGame(port)).toEqual({ status: 200 });
       reply = { status: 200, body: "not json" };
       expect(await probeLiveGame(port)).toEqual({ status: 200 });
-      expect(paths.every((p) => p === GAMESTATS_PATH)).toBe(true);
+      expect(paths.every((p) => p === EVENTDATA_PATH)).toBe(true);
     } finally {
       await new Promise((r) => server.close(r));
     }
@@ -107,7 +112,7 @@ describe("store game stage", () => {
 
   it("shows the loading screen during InProgress until the game has loaded", async () => {
     let started = false;
-    const store = new Store({ liveGame: { probe: async () => (started ? { gameTime: 2 } : { status: 404 }), intervalMs: 5 } });
+    const store = new Store({ liveGame: { probe: async () => ({ events: started ? 1 : 0, gameStart: started ? 0.05 : null }), intervalMs: 5 } });
     store.setLcuStatus("connected");
     store.attach(lcu("InProgress"));
     await tick();
@@ -122,7 +127,7 @@ describe("store game stage", () => {
   });
 
   it("has no game stage outside a game", async () => {
-    const probe = vi.fn(async (): Promise<GameProbe> => ({ gameTime: 5 }));
+    const probe = vi.fn(async (): Promise<GameProbe> => ({ events: 1, gameStart: 0.05 }));
     const store = new Store({ liveGame: { probe } });
     store.setLcuStatus("connected");
     store.attach(lcu("Lobby"));
