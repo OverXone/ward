@@ -6,10 +6,11 @@
  * https://127.0.0.1:2999. Its event list (/liveclientdata/eventdata) gets a "GameStart" event
  * once everyone has loaded in; only the event names and that event's time are read.
  *
- * The game clock (`gameTime` in /liveclientdata/gamestats) was tried first, but in a real game
- * Ward showed "Game in progress" at 81% loaded with it, so the clock isn't trusted. What the API answers before GameStart (no connection, a 404, an empty list) isn't
- * documented, so anything but a GameStart event counts as loading, and each kind of answer is
- * logged once per game so the real behaviour shows up in the activity log.
+ * The game clock (`gameTime` in /liveclientdata/gamestats) can't tell: seen in a real game
+ * (2026-11-28), it sits at about 0.036 s for the last part of the loading screen and only runs
+ * from the start. The event list went: no connection, then a 404, then an empty list, then
+ * GameStart (with that same 0.036 s as its time) when the clock started. Anything but a GameStart
+ * event counts as loading, and each kind of answer is logged once per game.
  *
  * The game serves a self-signed certificate. Verification is off only on the agent below, which
  * never talks to anything but 127.0.0.1, and no credentials are sent.

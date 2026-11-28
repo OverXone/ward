@@ -741,10 +741,10 @@ function toGame(): void {
 let gameLoadsAt = 0;
 
 /**
- * The game on port 2999. Its clock already runs on the loading screen (as a real game's seemed to),
- * and /liveclientdata/eventdata gets a GameStart event once everyone has loaded in. Riot's docs
- * don't say what the event list holds before that; this mock answers an empty list. The
- * connection is dropped when no game runs.
+ * The game on port 2999, as a real one behaved (2026-11-28): on the loading screen its clock
+ * already reads a little above zero and stands still, and /liveclientdata/eventdata is an empty
+ * list; once everyone has loaded in the clock runs and the list gets GameStart. (The real game
+ * also answers 404 for a few seconds first.) The connection is dropped when no game runs.
  */
 function handleLiveGame(req: any, res: any): void {
   const phase = state[URIS.phase];
@@ -752,10 +752,10 @@ function handleLiveGame(req: any, res: any): void {
   const sinceLoad = (Date.now() - gameLoadsAt) / 1000;
   const json = (body: unknown) => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body));
   if (req.method === "GET" && req.url === "/liveclientdata/gamestats") {
-    return json({ gameMode: "CLASSIC", gameTime: sinceLoad + LOADING_MS / 1000, mapName: "Map11", mapNumber: 11, mapTerrain: "Default" });
+    return json({ gameMode: "CLASSIC", gameTime: 0.036 + Math.max(0, sinceLoad), mapName: "Map11", mapNumber: 11, mapTerrain: "Default" });
   }
   if (req.method === "GET" && req.url === "/liveclientdata/eventdata") {
-    return json({ Events: sinceLoad > 0 ? [{ EventID: 0, EventName: "GameStart", EventTime: 0.05 }] : [] });
+    return json({ Events: sinceLoad > 0 ? [{ EventID: 0, EventName: "GameStart", EventTime: 0.036 }] : [] });
   }
   lcuError(res, 404, "not mocked");
 }
