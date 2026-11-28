@@ -737,23 +737,27 @@ function toGame(): void {
 
 // ---------- the game's Live Client Data API ----------
 
-/** When the mock game finishes loading (its clock starts). */
+/** When the mock game finishes loading (it sends GameStart). */
 let gameLoadsAt = 0;
 
 /**
- * GET /liveclientdata/gamestats, like the game on port 2999. Riot's docs don't say what it answers
- * on the loading screen; this mock answers 404 then, and drops the connection when no game runs.
+ * The game on port 2999, as a real one behaved (2026-11-28): on the loading screen its clock
+ * already reads a little above zero and stands still, and /liveclientdata/eventdata is an empty
+ * list; once everyone has loaded in the clock runs and the list gets GameStart. (The real game
+ * also answers 404 for a few seconds first.) The connection is dropped when no game runs.
  */
 function handleLiveGame(req: any, res: any): void {
   const phase = state[URIS.phase];
   if (phase !== "GameStart" && phase !== "InProgress") return void req.socket.destroy();
-  if (req.method !== "GET" || req.url !== "/liveclientdata/gamestats") return lcuError(res, 404, "not mocked");
-  const gameTime = (Date.now() - gameLoadsAt) / 1000;
-  if (gameTime <= 0) {
-    res.writeHead(404, { "Content-Type": "application/json" }).end(JSON.stringify({ errorCode: "RESOURCE_NOT_FOUND", httpStatus: 404, message: "No game data yet" }));
-    return;
+  const sinceLoad = (Date.now() - gameLoadsAt) / 1000;
+  const json = (body: unknown) => res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify(body));
+  if (req.method === "GET" && req.url === "/liveclientdata/gamestats") {
+    return json({ gameMode: "CLASSIC", gameTime: 0.036 + Math.max(0, sinceLoad), mapName: "Map11", mapNumber: 11, mapTerrain: "Default" });
   }
-  res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ gameMode: "CLASSIC", gameTime, mapName: "Map11", mapNumber: 11, mapTerrain: "Default" }));
+  if (req.method === "GET" && req.url === "/liveclientdata/eventdata") {
+    return json({ Events: sinceLoad > 0 ? [{ EventID: 0, EventName: "GameStart", EventTime: 0.036 }] : [] });
+  }
+  lcuError(res, 404, "not mocked");
 }
 
 // ---------- HTTP ----------
